@@ -1,0 +1,16 @@
+[package]
+name = "game"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Bevy app: window, input, and rendering of the sim world."
+
+[dependencies]
+actors = { path = "../actors" }
+bevy = "0.19.1"
+noita_data = { path = "../noita_data" }
+sim = { path = "../sim" }
+
+[lints]
+workspace = true

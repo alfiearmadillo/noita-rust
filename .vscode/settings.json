@@ -1,0 +1,10 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "cargo build": true,
+        "ForEach-Object": true,
+        "/^& \"\\$env:USERPROFILE\\\\\\.cargo\\\\bin\\\\cargo\\.exe\" test --offline -p sim -p noita_data$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

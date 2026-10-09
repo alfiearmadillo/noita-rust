@@ -1,0 +1,13 @@
+[package]
+name = "actors"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Headless character movement and collision against the sim grid."
+
+[dependencies]
+sim = { path = "../sim" }
+
+[lints]
+workspace = true

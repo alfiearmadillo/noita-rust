@@ -1,0 +1,6 @@
+/target
+/*.log
+
+# Local copies of Noita game files; never commit.
+/noita_files/*
+!/noita_files/.gitkeep

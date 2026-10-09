@@ -1,0 +1,13 @@
+[package]
+name = "box2d"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Port of Box2D 2.3.1 (the physics engine family Noita uses), in f32 with the original operation order."
+license = "Zlib"
+
+[dependencies]
+
+[lints]
+workspace = true

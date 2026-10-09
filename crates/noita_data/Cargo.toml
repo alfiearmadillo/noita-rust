@@ -1,0 +1,15 @@
+[package]
+name = "noita_data"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Readers for a local Noita install's data (never vendored into this repo)."
+
+[dependencies]
+png = "0.18.1"
+roxmltree = "0.21.1"
+sim = { path = "../sim" }
+
+[lints]
+workspace = true

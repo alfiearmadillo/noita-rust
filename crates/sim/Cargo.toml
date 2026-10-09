@@ -1,0 +1,12 @@
+[package]
+name = "sim"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Headless material grid and update rules; no game-framework dependencies."
+
+[dependencies]
+
+[lints]
+workspace = true

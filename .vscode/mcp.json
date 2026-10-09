@@ -1,0 +1,21 @@
+{
+    "servers": {
+        "ghidra": {
+            "type": "stdio",
+            "command": "C:\\Users\\alfie\\AppData\\Local\\Programs\\Python\\Python310\\Scripts\\uv.exe",
+            "args": [
+                "run",
+                "--directory",
+                "C:\\Users\\alfie\\Documents\\ghidra\\ghidraMCP\\ghidra-mcp",
+                "bridge-mcp-ghidra",
+                "--transport",
+                "stdio",
+                "--default-groups",
+                "listing,function,program,xref"
+            ],
+            "env": {
+                "GHIDRA_MCP_URL": "http://127.0.0.1:8089"
+            }
+        }
+    }
+}

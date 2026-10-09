@@ -1,0 +1,13 @@
+[package]
+name = "re_tools"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Read-only analysis helpers for the repo copy of the reference executable (noita_files/)."
+
+[dependencies]
+iced-x86 = "1.21.0"
+
+[lints]
+workspace = true
