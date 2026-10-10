@@ -110,7 +110,10 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 
 ## Phase 4: World and run structure
 
-21. [ ] World generation: Wang tiles, biome map, pixel scenes, biome Lua spawn functions, parallel worlds.
+21. [~] World generation: Wang tiles, biome map, pixel scenes, biome Lua spawn functions, parallel worlds.
+    Done: the herringbone Wang tile generator and tileset builder (`worldgen::wang`, all reference templates parse
+    and generate). Missing: the biome driver (seeds, retries, validity), color to material mapping, biome map,
+    pixel scenes, spawn functions.
 22. [ ] World streaming: chunk load/unload, world size, wrapping, edges.
 23. [ ] Rendering: backgrounds/parallax, sky, lighting, fog of war, emissive materials, glow, visibility-affecting
     post effects.

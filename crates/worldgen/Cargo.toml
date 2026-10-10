@@ -1,0 +1,17 @@
+[package]
+name = "worldgen"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "World generation: herringbone Wang tile maps as the reference builds them."
+
+[dependencies]
+sim = { path = "../sim" }
+
+[dev-dependencies]
+noita_data = { path = "../noita_data" }
+png = "0.18.1"
+
+[lints]
+workspace = true

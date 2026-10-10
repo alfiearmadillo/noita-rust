@@ -6051,6 +6051,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "worldgen"
+version = "0.0.0"
+dependencies = [
+ "noita_data",
+ "png",
+ "sim",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

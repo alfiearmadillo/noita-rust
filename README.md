@@ -36,6 +36,7 @@ crates/box2d/                Rust port of Box2D 2.3.1 (the engine Noita ships); 
 crates/noita_data/           readers for reference data: data.wak, materials.xml, sprite XML, sim table conversion
 crates/re_tools/             read-only analysis of noita_files/install/noita.exe (vtable, disasm, calls, xref, grep)
 crates/probe/                noita_probe: read-only reader for the running game's cell grid (see "Runtime probe")
+crates/worldgen/             world generation: herringbone Wang tile maps (more stages to come)
 scripts/ghidra-server.ps1    starts the headless Ghidra server used for decompilation (see PLAN.md)
 docs/                        behavior notebook template
 noita_files/                 local copies of Noita game files (git-ignored; never commit)
@@ -586,8 +587,6 @@ serializers `0x9ec700`, `0x69dc00`; privates follow the documented order):
   the gore branch (`CellData+0x1C4`, unidentified), vegetation shake and the stats vector; their `rand()` draws are
   therefore missing, so RNG streams only match the reference up to the first such effect.
 
-### Not yet ported from these functions
-
 ### Recovered rules: script RNG (ported in `crates/sim`, `sim::random`)
 
 The `Random` class is one `double` holding a Park-Miller state. The game has two global instances, both zero before use:
@@ -616,6 +615,33 @@ as the Sampo orb `Random(0, 999) == 999` in `0x78e640`).
   baseline 0.005.
 - `set_seed` is derived from the disassembly and not yet compared against a running game; the world-seed generator
   (`0x883540`, time-seeded) and the entity-side users of these draws are not ported.
+
+### Recovered rules: Wang tile maps (ported in `crates/worldgen`, `worldgen::wang`)
+
+Each biome's terrain starts as a herringbone Wang tile map. The exe compiles Sean Barrett's public-domain
+`stb_herringbone_wang_tile.h` (source: nothings/stb) with these differences: the scratch arrays `c_color` / `v_color` /
+`h_color` live inside the tileset struct (pitch 106 / 105 / 106), `STB_HBWANG_RAND()` is a per-thread `Random` and the
+limit is 100x100 tiles (`"increase STB_HBWANG_MAX_X/Y"`, string `0xfea8c0`).
+
+- **Functions**: `stbhw_generate_image` `0x866b90`, `stbhw_build_tileset_from_image` `0x867250` (count helper
+  `0x8663b0`), `stbhw__choose_tile` `0x866970`, `stbhw__change_color` `0x866a80`, blitters `0x866830` / `0x8668d0`.
+  All match the stock source (edge branch first in the exe; the corner branch includes the 3x2 repetition reduction
+  with `weights == NULL`).
+- **RNG** (`0x866120`): `rand() = (int)(next * 4.656612875e-10 * 2147483645)` on a `Random` built with the double
+  constructor `0x44d070` (state = seed, halved once if >= 2^31-1, then one step). The seed lives in `0x1207018`;
+  setting it frees the thread's generator so the next draw starts a fresh stream. A seed of 0.0 keeps the old stream.
+- **Template header**: the last 9 bytes of the image's first row, read backwards and XORed with `i * 55`; `header[7]
+  == 0xC0` means corner type (`num_color[4]`, `vary_x`, `vary_y`, `short_side_len` at 0..6), otherwise edge type (6 colors,
+  then `vary_x`, `vary_y`, `short_side_len`). Tiles are `2n x n` and `n x 2n` blocks inside a 1-pixel border, pitch `n + 3`.
+  Images are loaded as RGB (3 channels). All 31 corner and 2 edge templates in `data/wang_tiles` parse (coalmine: corner,
+  colors 1/2/1/2, side 13, 72+72 tiles).
+- **Biome wrapper** (`0x867770`, `0x867500`): builds the tileset, seeds, generates `height + 4` rows and discards the first
+  four rows; pixels are stored as ARGB with alpha 255 into the biome image. The biome driver (`0x879bf0`) retries up to
+  100 times with a new seed drawn from its own Park-Miller chain (biome seed `+0x4C`) until the validity check `0x8771a0`
+  accepts it; then every non-black pixel looks up its color in a spawn-function table (`FUN_00876aa0`) with a draw per
+  pixel.
+- Not ported: the biome driver chain (seeds, retries, validity check), the color to material / spawn mapping (`0x87a900`),
+  the biome map, pixel scenes, background layers.
 
 ### Not yet ported from these functions
 

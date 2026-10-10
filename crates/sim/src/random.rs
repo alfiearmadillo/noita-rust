@@ -73,6 +73,20 @@ impl Random {
         }
     }
 
+    /// `Random::Random(double seed)` (`0x44d070`): the seed (halved once if it reaches 2^31-1)
+    /// becomes the state, then one step is taken. World generation builds its generators this way.
+    pub fn from_seed(seed: f64) -> Self {
+        let mut r = Self {
+            state: if seed >= 2_147_483_647.0 {
+                seed * 0.5
+            } else {
+                seed
+            },
+        };
+        r.step();
+        r
+    }
+
     pub fn state(&self) -> i32 {
         cvtt32(self.state)
     }
