@@ -55,7 +55,7 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 5. [~] Reactions (alchemy): the reference tables (normal and fast, tag expansion, per-material maximum probability),
     lookup, dispatcher, burning-cell path, record application (outputs, third input, direction, `req_lifetime`,
     lonely pixels), blobs and the liquid, gas and fire call sites are ported (see "Reactions" in `README.md`). Missing:
-    blob particles, `convert_all`, entity spawns, audio, and an exact check of tag-expansion nesting for
+    `convert_all`, entity spawns, audio, and an exact check of tag-expansion nesting for
     records with several tags. Required reactions are ported; the spontaneous freezing/melting rolls are dead code
     (their worker bytes are never written).
 6. [ ] Other cell behaviors: lifetime, electricity/conductivity, freezing/melting, burning states, particle

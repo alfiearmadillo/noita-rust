@@ -198,6 +198,49 @@ fn blob_fills_a_disc_after_the_region_update() {
     assert_eq!(w.get(34, 32), Some(MaterialId(0)), "dx² = r² is outside");
 }
 
+fn speck_blob_world() -> World {
+    let materials = abcd(vec![reaction(&[
+        ("probability", "100"),
+        ("fast_reaction", "1"),
+        ("input_cell1", "a"),
+        ("input_cell2", "b"),
+        ("output_cell1", "c"),
+        ("output_cell2", "d"),
+        ("blob_radius1", "2"),
+        ("cosmetic_particle", "d"),
+    ])]);
+    let mut w = surrounded(materials, A, B);
+    run_active(&mut w, 20);
+    w
+}
+
+#[test]
+fn blob_cells_emit_cosmetic_specks() {
+    let mut w = speck_blob_world();
+    let specks = w.take_specks();
+    assert_eq!(specks.len(), 9, "one per converted cell");
+    for s in &specks {
+        assert_eq!(s.material, D);
+        assert!((-10.0..=10.0).contains(&s.vel.0), "{:?}", s.vel);
+        assert!((-20.0..=-10.0).contains(&s.vel.1), "{:?}", s.vel);
+    }
+}
+
+#[test]
+fn blob_specks_rise_swirl_and_fade() {
+    let mut w = speck_blob_world();
+    let mut ps = sim::particles::Particles::new(1);
+    let dt = 1.0 / 60.0;
+    ps.update(&mut w, dt, 0.0);
+    assert_eq!(ps.len(), 9);
+    let p = &ps.particles[0];
+    assert_eq!(p.mode, sim::particles::MODE_FREE);
+    assert_eq!(p.accel, (0.0, -5.0));
+    assert!(
+        (p.fade_rate * (p.lifetime + dt) + 1.0).abs() < 1e-4,
+        "fade over the lifetime"
+    );
+}
 #[test]
 fn restricted_blob_converts_only_input_cells_along_rays() {
     let materials = abcd(vec![reaction(&[

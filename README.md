@@ -213,7 +213,10 @@ reaction rules below). Normalized, inherited material tags are available on `Mat
   by row; restricted ones (`blob_restrict_to_input_material1/2`, `+0x2E`/`+0x2F`) need the center to hold the input,
   change it, then cast `(int)(r·2π + 0.5)` f32 rays of `r` unit steps from angle 0 that convert input cells, pass
   through output cells and stop at anything else. ChangeMaterial on `GridWorld` applies at once. With a
-  `cosmetic_particle` (`+0x24`) each converted cell draws two global `rand()`s; the particles are not spawned.
+  `cosmetic_particle` (`+0x24`) each converted cell draws two global `rand()`s (velocity `(20r - 10, 10r - 20)`, second
+  draw first in x) and creates a speck through `0x716ce0` (life 0.5..1.2 s, no collision, grid check on) at the cell, or
+  at `floor(ray position) + 0.5` for rays; the blob then sets swirl 0.25/0.25, acceleration `(0, -5)`, mode 2 and
+  `fade_rate = -1 / lifetime`. `World::take_specks` hands them to `Particles::update`.
 - **SetCell** (`0x71b140`): queued changes carry a replace flag. ChangeMaterial and lifetime removal replace (the
   occupant is removed first, marking `(x, y-1)`); a reaction output into empty space does not, and is dropped if the
   cell was filled before the flush.
@@ -232,7 +235,7 @@ reaction rules below). Normalized, inherited material tags are available on `Mat
   turns a sealed cell into soil. Fast reactions (`0x70eaf0`) never run them. The freezing/melting rolls in the
   dispatcher read worker bytes `+0x452`/`+0x453`, but no instruction in the exe writes them (byte-pattern search;
   only the dispatcher reads them), so they never fire and are left out.
-- **Unported**: cosmetic blob particles,
+- **Unported**:
   `convert_all` (world vfn `0x34`; unused by the reference data), entity spawns, audio, and a liquid queue gated by
   `CellData+0x21C`
   (`0x70cae5`, world vfn `0x88`). A reaction's attached `ExplosionConfig` is ported (see Explosions).

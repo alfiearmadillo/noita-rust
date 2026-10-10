@@ -535,6 +535,16 @@ pub struct World {
     explosion_count: u32,
     /// Flushed explosions waiting for the dispatcher (`Particles::run_explosions`).
     pending_explosions: Vec<particles::QueuedExplosion>,
+    /// Cosmetic specks queued by reaction blobs, drained by `Particles::update`.
+    pending_specks: Vec<CosmeticSpeck>,
+}
+
+/// A speck a reaction blob asks the particle system to create (`0x71ab50` -> `0x716ce0`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CosmeticSpeck {
+    pub material: MaterialId,
+    pub pos: (f32, f32),
+    pub vel: (f32, f32),
 }
 
 /// `GridWorldThreaded` splash aggregate (`+0xE0..+0xEC`), drained by the caller when consumed.
@@ -687,6 +697,7 @@ impl World {
             spawn_rng: MsvcRand::new(seed),
             explosion_count: 0,
             pending_explosions: Vec::new(),
+            pending_specks: Vec::new(),
         }
     }
 
@@ -923,6 +934,11 @@ impl World {
         std::mem::take(&mut self.pending_explosions)
     }
 
+    /// Takes the cosmetic specks queued by reaction blobs; `Particles::update` creates them.
+    pub fn take_specks(&mut self) -> Vec<CosmeticSpeck> {
+        std::mem::take(&mut self.pending_specks)
+    }
+
     /// World vfn 0x80 (`0x72b3d0`): queue an explosion record on the updating region.
     fn queue_explosion(&mut self, config: particles::ExplosionConfig, pos: (f32, f32)) {
         let region = self.current.expect("inside a region update");
@@ -952,8 +968,9 @@ impl World {
     /// `GridWorld` vt[12] (0x71ab50). Unrestricted: every cell with `dx² + dy² < r²` is set,
     /// row by row. Restricted: the center must hold `restrict_material` and changes; then
     /// `round(2πr)` rays of `r` unit steps convert `restrict_material` cells, pass through cells
-    /// already of the output and stop at anything else. Cosmetic particles (two global `rand()`
-    /// per converted cell) are not spawned.
+    /// already of the output and stop at anything else. With a cosmetic particle material each
+    /// converted cell queues a speck (two global `rand()` for its velocity), see
+    /// [`World::take_specks`].
     fn apply_blob(&mut self, blob: Blob) {
         let Blob {
             x,
@@ -964,10 +981,16 @@ impl World {
             restrict_material,
             particle,
         } = blob;
-        let particle_rolls = |world: &mut Self| {
-            if particle.is_some_and(|p| p.0 > 0) {
-                world.global_rng.rand();
-                world.global_rng.rand();
+        let emit = |world: &mut Self, pos: (f32, f32)| {
+            if let Some(material) = particle.filter(|p| p.0 > 0) {
+                let (first, second) = (world.global_rng.rand(), world.global_rng.rand());
+                let vel = (
+                    second as f32 / 32767.0 * 20.0 - 10.0,
+                    first as f32 / 32767.0 * 10.0 - 20.0,
+                );
+                world
+                    .pending_specks
+                    .push(CosmeticSpeck { material, pos, vel });
             }
         };
         if !restrict {
@@ -975,7 +998,7 @@ impl World {
                 for dx in -r..=r {
                     if dx * dx + dy * dy < r * r {
                         self.set_cell(x + dx, y + dy, material, true);
-                        particle_rolls(self);
+                        emit(self, ((x + dx) as f32, (y + dy) as f32));
                     }
                 }
             }
@@ -1008,7 +1031,7 @@ impl World {
                 // SetCell branch of the reference never runs.
                 if here == restrict_material {
                     self.change_material(cx, cy, material);
-                    particle_rolls(self);
+                    emit(self, (fx.floor() + 0.5, fy.floor() + 0.5));
                 } else if here != material {
                     break;
                 }

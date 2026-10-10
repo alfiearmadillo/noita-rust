@@ -476,6 +476,9 @@ impl Particles {
     /// by `dt` seconds at game time `time` (the swirl noise's third coordinate), removes dead
     /// ones, hands their cells to the landing queue and lands what it can.
     pub fn update(&mut self, world: &mut World, dt: f32, time: f64) {
+        for s in world.take_specks() {
+            self.add_blob_speck(world, s);
+        }
         let window = self
             .window
             .unwrap_or((0, 0, world.width() - 1, world.height() - 1));
@@ -487,6 +490,29 @@ impl Particles {
         self.remove_dead();
         self.hand_off(world.frame);
         self.land(world);
+    }
+
+    /// A reaction blob's speck (`0x71ab50`): a short-lived rising, swirling, fading speck that
+    /// ignores the grid.
+    fn add_blob_speck(&mut self, world: &World, s: crate::CosmeticSpeck) {
+        let speck = Speck {
+            material: s.material,
+            pos: s.pos,
+            vel: s.vel,
+            color: None,
+            life: (0.5, 1.2),
+            allow_occupied: true,
+            in_grid: true,
+        };
+        if self.add_from_material(world, speck)
+            && let Some(p) = self.particles.last_mut()
+        {
+            p.swirl_amp = 0.25;
+            p.swirl_freq = 0.25;
+            p.accel = (0.0, -5.0);
+            p.mode = MODE_FREE;
+            p.fade_rate = -1.0 / p.lifetime;
+        }
     }
 
     /// `0x713e20`
