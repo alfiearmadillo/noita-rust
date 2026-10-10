@@ -38,6 +38,7 @@ crates/re_tools/             read-only analysis of noita_files/install/noita.exe
 crates/probe/                noita_probe: read-only reader for the running game's cell grid (see "Runtime probe")
 crates/worldgen/             world generation: herringbone Wang tile maps (more stages to come)
 crates/script/               LuaJIT runtime (mlua, vendored) for the reference scripts; wand engine running gun.lua
+crates/entity/               entity XML templates: lenient XML reader, <Base> inheritance (components as attribute trees)
 scripts/ghidra-server.ps1    starts the headless Ghidra server used for decompilation (see PLAN.md)
 docs/                        behavior notebook template
 noita_files/                 local copies of Noita game files (git-ignored; never commit)
@@ -667,6 +668,25 @@ that is a no-op without mods). Script API functions are native handlers register
 - Not ported: turning the commands into projectile entities (needs the entity/component layer), the progress flags,
   per-item use bookkeeping, and every other script API function (`EntityGetFirstComponent`, `GameGetFrameNum` is a
   settable counter, ...). Spell actions that call those will fail until the functions exist.
+
+### Recovered rules: entity files (ported in `crates/entity`)
+
+- XML is read by a forgiving parser: comments inside a tag (`<!-- attr=".." -->` between attributes), `--` inside
+  comments and repeated attributes are accepted (the last value is used here; the reference's choice is unverified).
+  `<Entity name tags>` holds components (`<XComponent attr=..>` with optional nested attribute trees such as
+  `<damage_multipliers holy="1.2"/>`), child `<Entity>` elements, `<_Transform position.x=..>` and `<Base file=..>`.
+  Vector members spell as `x_x` / `x_y` attributes on components and `position.x` inside nested elements.
+- `<Base file=".." include_children="1">` (handler `0x575270`, strings `include_children` `0x1002d64`, `_Transform`,
+  `Entity`): loads the base entity and applies the Base's child elements as overrides: component elements override the
+  base's components, `<_Transform>` overrides the transform, nested `<Entity>` elements are added when `include_children`
+  is set (the flag also controls whether the base's own children are included). The component matching rule used here
+  (the k-th element of a type overrides the k-th component of that type, missing ones are appended; attributes replace,
+  nested elements merge by tag; entity `tags` accumulate, other attributes of the derived entity win) follows the modding
+  documentation and is not a verified port of the matching code.
+- 2805 of 3030 files under `data/entities` resolve; 222 are other XML kinds (sprites, ragdolls) and 3 name base files that
+  are missing from the shipped data (`vine_verlet_1.xml`, `debug/testwand.xml`, `debug/rope.xml`).
+- Not ported: instantiation (typed component values from `component_documentation.txt`, `$[a-b]` random ranges, ids,
+  transforms), component systems, serialization.
 
 ### Not yet ported from these functions
 

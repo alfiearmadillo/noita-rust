@@ -170,3 +170,14 @@ fn the_reference_gun_action_table_loads() {
     assert_eq!(bomb.get::<i32>("max_uses").unwrap(), 3);
     assert!(bomb.get::<mlua::Function>("action").is_ok());
 }
+
+#[test]
+fn globals_store_strings() {
+    let rt = Runtime::new(PathBuf::from("."), 1).unwrap();
+    let (a, b, c): (String, String, String) = rt
+        .lua()
+        .load(r#"GlobalsSetValue("k", "v") return GlobalsGetValue("k"), GlobalsGetValue("missing", "d"), GlobalsGetValue("none")"#)
+        .eval()
+        .unwrap();
+    assert_eq!((a.as_str(), b.as_str(), c.as_str()), ("v", "d", ""));
+}

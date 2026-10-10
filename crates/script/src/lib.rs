@@ -6,6 +6,7 @@ pub mod gun;
 mod random_api;
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use mlua::{Function, Lua, MultiValue, Table, Value};
@@ -22,6 +23,8 @@ pub(crate) struct ScriptState {
     pub output: RefCell<Vec<String>>,
     pub commands: RefCell<Vec<gun::GunCommand>>,
     pub frame: Cell<i32>,
+    /// `GlobalsSetValue` / `GlobalsGetValue`: string keys shared by every script.
+    pub globals: RefCell<HashMap<String, String>>,
 }
 
 pub struct Runtime {
@@ -38,6 +41,7 @@ impl Runtime {
             output: RefCell::new(Vec::new()),
             commands: RefCell::new(Vec::new()),
             frame: Cell::new(0),
+            globals: RefCell::new(HashMap::new()),
         });
         install_base(&lua)?;
         random_api::install(&lua)?;
@@ -135,6 +139,24 @@ fn install_base(lua: &Lua) -> mlua::Result<()> {
     globals.set(
         "do_mod_appends",
         lua.create_function(|_, _name: Value| Ok(()))?,
+    )?;
+    globals.set(
+        "GlobalsSetValue",
+        lua.create_function(|lua, (key, value): (String, String)| {
+            if let Some(state) = lua.app_data_ref::<ScriptState>() {
+                state.globals.borrow_mut().insert(key, value);
+            }
+            Ok(())
+        })?,
+    )?;
+    globals.set(
+        "GlobalsGetValue",
+        lua.create_function(|lua, (key, default): (String, Option<String>)| {
+            let found = lua
+                .app_data_ref::<ScriptState>()
+                .and_then(|state| state.globals.borrow().get(&key).cloned());
+            Ok(found.or(default).unwrap_or_default())
+        })?,
     )?;
     lua.load(DOFILE_ONCE).set_name("=dofile_once").exec()?;
     Ok(())

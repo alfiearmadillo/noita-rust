@@ -1,0 +1,10 @@
+[package]
+name = "entity"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Entity XML templates: <Base> inheritance, components as attribute trees."
+
+[lints]
+workspace = true

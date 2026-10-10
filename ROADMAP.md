@@ -75,8 +75,9 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 
 ## Phase 2: Engine skeleton
 
-8. [ ] Entity/component system: entity XML loading, `<Base>` inheritance, tags, children, transforms, recovered
-   system update order.
+8. [~] Entity/component system: entity XML loading, `<Base>` inheritance, tags, children, transforms, recovered
+   system update order. Done: template loader with `<Base>` inheritance (`crates/entity`, all reference entity files
+   resolve). Missing: typed component values, instantiation, ids, transforms, the live entity store.
 9. [ ] Component set: fields and defaults from `component_documentation.txt`, ported system by system as needed.
 10. [~] Lua runtime (LuaJIT / Lua 5.1) and the API from `lua_api_documentation.txt`; all script hooks.
     Done: LuaJIT via `mlua` (`crates/script`), `dofile` / `dofile_once` / `loadfile` with a rooted virtual file system,
