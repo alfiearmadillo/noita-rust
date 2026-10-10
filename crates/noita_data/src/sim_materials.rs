@@ -129,6 +129,12 @@ fn props_of(d: &MaterialDef) -> MaterialProps {
         liquid_stains_self: d
             .attr_flag("liquid_stains_self")
             .unwrap_or(base.liquid_stains_self),
+        liquid_stains: int("liquid_stains").map_or(base.liquid_stains, |v| v as u32),
+        liquid_stains_custom_color: d
+            .attr("liquid_stains_custom_color")
+            .and_then(|s| u32::from_str_radix(s.trim(), 16).ok())
+            .unwrap_or(base.liquid_stains_custom_color),
+        stainable: d.attr_flag("stainable").unwrap_or(base.stainable),
         liquid_gravity: d.attr_f32("liquid_gravity").unwrap_or(base.liquid_gravity),
         liquid_viscosity: int("liquid_viscosity").unwrap_or(base.liquid_viscosity),
         liquid_sticks_to_ceiling: int("liquid_sticks_to_ceiling")

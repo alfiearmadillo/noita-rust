@@ -3399,6 +3399,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "mach"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b823e83b2affd8f40a9ee8c29dbc56404c1e34cd2710921f2801e2cf29527afa"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "mach2"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3554,6 +3563,13 @@ dependencies = [
  "png",
  "roxmltree",
  "sim",
+]
+
+[[package]]
+name = "noita_probe"
+version = "0.0.0"
+dependencies = [
+ "read-process-memory",
 ]
 
 [[package]]
@@ -4423,6 +4439,18 @@ dependencies = [
  "bytemuck",
  "font-types 0.12.5",
  "once_cell",
+]
+
+[[package]]
+name = "read-process-memory"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8497683b2f0b6887786f1928c118f26ecc6bb3d78bbb6ed23e8e7ba110af3bb0"
+dependencies = [
+ "libc",
+ "log",
+ "mach",
+ "winapi",
 ]
 
 [[package]]

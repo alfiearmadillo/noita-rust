@@ -292,3 +292,24 @@ fn reference_material_names_translate_to_english() {
     );
     assert_eq!(name_of("water").as_deref(), Some("Water"));
 }
+
+#[test]
+fn reference_stain_fields_reach_the_sim_table() {
+    let Some(defs) = reference_materials() else {
+        return;
+    };
+    let table = noita_data::sim_materials::to_sim_with_reactions(&defs, &[], &[], |_| None);
+    let all: Vec<_> = (0..table.len())
+        .filter_map(|i| table.get(sim::MaterialId(i as u16)))
+        .collect();
+    assert!(all.iter().any(|m| m.liquid_stains & 2 != 0));
+    assert!(
+        all.iter()
+            .any(|m| m.liquid_stains_custom_color == 0xaa83_0000)
+    );
+    assert!(
+        all.iter().any(|m| !m.stainable),
+        "seven materials set stainable=0"
+    );
+    assert!(all.iter().filter(|m| m.stainable).count() > 100);
+}

@@ -6,6 +6,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+pub mod noise;
+pub mod particles;
 mod reactions;
 
 pub use reactions::{Direction, Reaction};
@@ -37,6 +39,13 @@ pub struct MaterialProps {
     pub liquid_slime: bool,
     pub liquid_static: bool,
     pub liquid_stains_self: bool,
+    /// `+0x170`: bit 1 darkens the neighbor toward 0.7 of its base color, bit 2 tints it toward
+    /// this cell's stain color, bit 4 pulls it toward a mix of that and its base color.
+    pub liquid_stains: u32,
+    /// `+0x174`: stain color (ARGB) used instead of the cell's own color when nonzero.
+    pub liquid_stains_custom_color: u32,
+    /// `+0x8D`: neighbors of other cells may stain it (constructor default 1).
+    pub stainable: bool,
     pub liquid_gravity: f32,
     pub liquid_viscosity: i32,
     pub liquid_sticks_to_ceiling: i32,
@@ -83,6 +92,9 @@ impl MaterialProps {
             liquid_slime: false,
             liquid_static: false,
             liquid_stains_self: false,
+            liquid_stains: 0,
+            liquid_stains_custom_color: 0,
+            stainable: true,
             liquid_gravity: 0.5,
             liquid_viscosity: 50,
             liquid_sticks_to_ceiling: 0,
@@ -381,6 +393,8 @@ pub struct Cell {
     pub flow: f32,
     /// ARGB chosen when the cell was created; travels with the cell.
     pub color: u32,
+    /// `+0x34`: the color the cell was created with; stains pull `color` back toward it.
+    pub base_color: u32,
     /// Last frame this cell updated (liquid `+0x2C`, gas `+0x1C`).
     frame: u32,
     /// Gas `+0x18`: sideways direction tried first, -1 or 1.
@@ -408,6 +422,7 @@ impl Cell {
             vel: 0.0,
             flow: 0.0,
             color,
+            base_color: color,
             frame: 0,
             dir: 0,
             age: 0,
@@ -444,6 +459,30 @@ pub fn darkened(argb: u32, factor: f32) -> u32 {
     let keep = 1.0 - factor;
     let scale = |v: u32| ((v as f32 * keep) as u32).max(FLOOR);
     (argb & 0xFF00_0000) | (scale(r) << 16) | (scale(g) << 8) | scale(b)
+}
+
+/// 0xddcd40 with the keep-alpha flag the stain code always sets: each channel of `a` weighted by
+/// `t` plus each of `b` weighted by `1 - t` (f32, truncated, wrapping per byte); alpha is `b`'s.
+fn blend_keep_alpha(a: u32, b: u32, t: f32) -> u32 {
+    if a == b {
+        return a;
+    }
+    let inv = 1.0 - t;
+    let channel = |shift: u32| {
+        let (ca, cb) = ((a >> shift) & 0xFF, (b >> shift) & 0xFF);
+        ((ca as f32 * t) as u32).wrapping_add((cb as f32 * inv) as u32) & 0xFF
+    };
+    (b & 0xFF00_0000) | (channel(16) << 16) | (channel(8) << 8) | channel(0)
+}
+
+/// 0x44aaa0 / 0x44ab60: unpack to f32 channels (/255), scale the three low channels by 0.7 and
+/// repack with truncation. The alpha channel makes the same float round trip.
+fn dimmed_to_seven_tenths(color: u32) -> u32 {
+    let unpack = |shift: u32| ((color >> shift) & 0xFF) as f32 / 255.0;
+    let pack = |v: f32| ((v * 255.0) as i32 as u32) & 0xFF;
+    let (c0, c1, c2, a) = (unpack(0), unpack(8), unpack(16), unpack(24));
+    let scale = 0.7f32;
+    (pack(a) << 24) | (pack(c2 * scale) << 16) | (pack(c1 * scale) << 8) | pack(c0 * scale)
 }
 
 /// End of a liquid-flow update (0x70c590 vs 0x70c6a2).
@@ -1097,7 +1136,7 @@ impl World {
     }
 
     /// `CLiquidCell` vt[21] (0x70c6e0): static-cell checks, movement dispatch, burning, fire-HP
-    /// conversion and reactions. Stains (`liquid_stains`, 0x70ce40) and the `+0x21C` queue remain unported.
+    /// conversion and reactions. The `+0x21C` queue remains unported.
     fn update_cell(&mut self, x: i32, y: i32, full: bool) {
         let frame = self.frame;
         let Some(cell) = self.cell(x, y).copied() else {
@@ -1117,11 +1156,12 @@ impl World {
         if cell.material == AIR || mat.cell_type != CellType::Liquid {
             return;
         }
-        let (is_sand, is_slime, sticks, lifetime) = (
+        let (is_sand, is_slime, sticks, lifetime, stains) = (
             mat.liquid_sand,
             mat.liquid_slime,
             mat.liquid_sticks_to_ceiling,
             mat.lifetime,
+            mat.liquid_stains != 0,
         );
         if cell.is_static {
             if full && self.rng().rand() % 101 < 20 {
@@ -1158,7 +1198,10 @@ impl World {
         }
         let c = self.cell_mut(x, y).expect("in bounds");
         c.frame = frame;
-        // 0x70c6e0: a liquid older than its `lifetime` (+0x154) becomes air (stain roll 0x70ce40 unported).
+        if stains {
+            self.stain_neighbor(x, y);
+        }
+        // 0x70c6e0: a liquid older than its `lifetime` (+0x154) becomes air.
         if lifetime > 0 && self.cell_age(x, y) >= lifetime {
             self.change_material(x, y, AIR);
             return;
@@ -1368,6 +1411,62 @@ impl World {
         };
         self.change_material(x, y, target);
         true
+    }
+
+    /// `liquid_stains` roll of a moving liquid (0x70ce40): about a quarter of updates pick the cell
+    /// to the left, right or below and recolor it; the RNG draws happen even when nothing is stained.
+    fn stain_neighbor(&mut self, x: i32, y: i32) {
+        if self.rng().rand() & 0x7F < 0x5F {
+            return;
+        }
+        let (nx, ny) = match self.rng().rand() % 3 {
+            0 => (x - 1, y),
+            1 => (x + 1, y),
+            _ => (x, y + 1),
+        };
+        if !self.movable(nx, ny) || !self.occupied(nx, ny) {
+            return;
+        }
+        let (this, other) = (
+            *self.cell(x, y).expect("in bounds"),
+            *self.cell(nx, ny).expect("in bounds"),
+        );
+        let (Some(me), Some(target)) = (
+            self.materials.get(this.material),
+            self.materials.get(other.material),
+        ) else {
+            return;
+        };
+        if matches!(target.cell_type, CellType::Gas | CellType::Fire) || !target.stainable {
+            return;
+        }
+        let same_material = me.liquid_stains_self && other.material == this.material;
+        if !same_material && target.cell_type == CellType::Liquid && !target.liquid_sand {
+            return;
+        }
+        let stain = if me.liquid_stains_custom_color != 0 {
+            me.liquid_stains_custom_color
+        } else {
+            this.color
+        };
+        let flags = me.liquid_stains;
+        let mut color = other.color;
+        if flags & 1 != 0 {
+            let dimmed = dimmed_to_seven_tenths(other.base_color);
+            if color != dimmed {
+                color = blend_keep_alpha(dimmed, color, 0.1);
+            }
+        }
+        if flags & 2 != 0 {
+            color = blend_keep_alpha(stain, color, 0.2);
+        }
+        if flags & 4 != 0 {
+            let mixed = blend_keep_alpha(stain, other.base_color, 0.5);
+            if color != mixed {
+                color = blend_keep_alpha(mixed, color, 0.2);
+            }
+        }
+        self.cell_mut(nx, ny).expect("in bounds").color = color;
     }
 
     /// 0x70ad30: all four orthogonal neighbors are movable and empty.
@@ -1685,6 +1784,7 @@ impl World {
             let converted = self.cell_mut(x, y).expect("in bounds");
             converted.material = target;
             converted.color = color;
+            converted.base_color = color;
             converted.is_static = is_static;
             // Liquid vt[13] (0x70d0b0) restamps the creation frame.
             if is_liquid {
@@ -1792,7 +1892,12 @@ impl World {
             }
             return;
         }
-        self.burn_hook(x, y);
+        // 0x70a670 also runs a heat block here (`+0x2C > 0`: cool by `rand() % 3`, mirror into the
+        // fire intensity, maybe spread fire); no code sets a gas cell's heat, so it never runs.
+        if self.cell(x, y).expect("in bounds").burning {
+            self.burn_hook(x, y);
+            self.mark(x, y);
+        }
         self.move_gas(x, y, full);
     }
 
@@ -2487,5 +2592,17 @@ mod tests {
         sorted.sort_unstable();
         assert_eq!(sorted, (0..regions).collect::<Vec<_>>());
         assert_eq!(w.sweep_pos, 0, "the cycle wrapped and reshuffled");
+    }
+
+    #[test]
+    fn blend_weights_the_first_color_and_keeps_the_second_alpha() {
+        assert_eq!(blend_keep_alpha(0xFFFF_0000, 0x8000_0000, 0.2), 0x8033_0000);
+        assert_eq!(blend_keep_alpha(0xFF12_3456, 0xFF12_3456, 0.5), 0xFF12_3456);
+    }
+
+    #[test]
+    fn seven_tenths_dimming_truncates_each_channel() {
+        assert_eq!(dimmed_to_seven_tenths(0xFF80_8080), 0xFF59_5959);
+        assert_eq!(dimmed_to_seven_tenths(0xFF00_0000), 0xFF00_0000);
     }
 }

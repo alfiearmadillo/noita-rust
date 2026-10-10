@@ -21,11 +21,11 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
     onto a still-moving liquid (world vfn `0x4C`), splash aggregates, and the no-emission oxygen-decay branch for
     active liquid cells ported. Burning-liquid fire-HP conversion to the flame material (static and moved cells) and
     removal of isolated non-burning static cells on full updates are also ported, as are the reaction call sites.
-    Missing: audio consumption, the `CellData+0x21C` queue and `liquid_stains` (0x70ce40, which also draws RNG).
+    Missing: audio consumption and the `CellData+0x21C` queue (`liquid_stains` is ported).
     Liquid `lifetime` (age >= lifetime becomes air, checked after the frame guard) is ported.
 2. [~] Gases: rising, sideways and downward movement, gas-gas density swaps, liquids falling through gas, lifetime
     (counted in moves) with deferred removal, and oxygen-driven intensity decay for active gases with no flame/smoke
-    outputs ported. Missing: heat (`+0x2C`) and the construction RNG seed for
+    outputs ported. Missing: the construction RNG seed for
     cells placed outside an update.
 3. [~] Fire: fire-related `CellData` fields reach the simulation table; construction initializes the burning flag and
     intensity from `on_fire` / `temperature_of_fire`, with `CFireCell` forcing its active flag. The no-emission oxygen
@@ -58,8 +58,15 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
     blob particles, `convert_all`, entity spawns, audio, explosions, and an exact check of tag-expansion nesting for
     records with several tags. Required reactions are ported; the spontaneous freezing/melting rolls are dead code
     (their worker bytes are never written).
-6. [ ] Other cell behaviors: stains, lifetime, electricity/conductivity, freezing/melting, burning states, particle
-   cells.
+6. [ ] Other cell behaviors: lifetime, electricity/conductivity, freezing/melting, burning states, particle
+   cells. Particle cells (flying pixels, 0x70-byte records in two pools of up to 100000, created by `0x7168c0`
+   from a grid cell or by `0x716ce0`/`0x716af0` from a material and velocity, landed by `0x71fba0`/`0x71fde0`) are
+   what explosions, joint breaks and blob effects emit. Ported in `sim::particles`: record defaults, the integrator
+   (`0x713e20`, simplex swirl in `sim::noise`), the collision stepper (`0x712390`), `AddAsParticle` and the material
+   creator, the dead-particle pass (`0x716600`) and the landing queue (`0x71a590`, `0x71fde0`, `0x71fba0`). Still
+   missing: the explosion and joint-break callers, force rectangles, the render lists and the `liquid_stains == 2`
+   hook; the engine's camera-local material grid is read from the live world instead. Layout notes are in the repo
+   memory (`particles.md`).
 7. [~] Scheduler: 64x64 worker regions with per-region dirty rects, RNGs and full counters, rect sharing across
     borders (`IMPL_AddUpdateAABB`), the random full-region scan, the per-frame shuffled sweep of every region in the
     update window, and the ±32 px movable margin ported. Missing: the
@@ -85,7 +92,11 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 14. [ ] Damage model: HP, damage types and multipliers, fall damage, fire, drowning, material damage, i-frames,
     blood/gore, ragdolls.
 15. [ ] Projectiles: motion, cell/entity collision, lifetime, bounces, triggers.
-16. [ ] Explosions: terrain carving by durability, physics impulses, damage falloff, light/shake.
+16. [ ] Explosions: terrain carving by durability, physics impulses, damage falloff, light/shake. Recovered so
+    far: 15 reference materials carry a CellData `<ExplosionConfig>` (`+0x100`) rolled from the burn hook (`0x70fb10`)
+    and 3 reactions carry one; records (config `0x168` bytes plus position) queue on the worker (`0x72b3d0`), flush
+    through `GridWorld` vt[32] (`0x721350`) and `0x657410` into the 18 KB `0x657960` (decompiles with
+    `/force_decompile`; it casts 360 rays, then damages entities and bodies and emits particle cells).
 17. [ ] Wands: `AbilityComponent` gun stats, cast delay, recharge, mana, spread, shuffle, spells per cast.
 18. [ ] Spells: run the reference `gun.lua` / `gun_actions.lua` / extra modifiers in the Lua runtime; all ~400 spells
     with modifiers, triggers, multicasts, wrapping and draw/shuffle bugs.
@@ -123,8 +134,9 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 
 - Every ported rule gets a README entry with its exe address and a test.
 - Behavior that can't be recovered statically is observed in the running game and recorded with the notebook template.
-- Extend `re_tools` when needed (function-level decompiler view, runtime memory reader for the real game, replay
-  capture).
+- Extend `re_tools` when needed (function-level decompiler view, replay
+  capture). `noita_probe` (read-only runtime reader, see `README.md`) exists; next: load its dumps into `sim` to
+  compare a pile or reaction scene frame by frame, and read the per-region RNGs.
 
 ## Biggest risks
 

@@ -35,6 +35,7 @@ crates/actors/               character controller and animation stack ported fro
 crates/box2d/                Rust port of Box2D 2.3.1 (the engine Noita ships); source fetched from the public repo
 crates/noita_data/           readers for reference data: data.wak, materials.xml, sprite XML, sim table conversion
 crates/re_tools/             read-only analysis of noita_files/install/noita.exe (vtable, disasm, calls, xref, grep)
+crates/probe/                noita_probe: read-only reader for the running game's cell grid (see "Runtime probe")
 scripts/ghidra-server.ps1    starts the headless Ghidra server used for decompilation (see PLAN.md)
 docs/                        behavior notebook template
 noita_files/                 local copies of Noita game files (git-ignored; never commit)
@@ -62,6 +63,33 @@ scripts\ghidra-server.ps1                               # start headless Ghidra 
 ```
 
 Executable analysis goes through Ghidra first; see "Executable Analysis Workflow" in [PLAN.md](PLAN.md).
+
+### Runtime probe (`noita_probe`)
+
+Reads the running reference game's memory (open for reading only; nothing is written, injected or hooked) to
+compare the port against the real simulation. Start Noita, then:
+
+```sh
+cargo run -p noita_probe -- status                       # pid, frame, GridWorld pointer, loaded bounds
+cargo run -p noita_probe -- grid -32 -32 64 64 --tsv a.tsv   # ASCII map plus one line per occupied cell
+cargo run -p noita_probe -- cell 12 -40                  # one cell with raw bytes
+cargo run -p noita_probe -- rng                          # frame counter and the global rand() state
+cargo run -p noita_probe -- ages -320 -192 640 512       # update-stamp age of moving cells per 64x64 region
+cargo run -p noita_probe -- peek 0x35ab2950 0x40         # raw dwords at an address
+cargo run -p noita_probe -- scan 0x1017b24               # addresses holding a dword (here: the worker vtable)
+cargo run -p noita_probe -- workers                      # every region worker: origin, RNG, full counter, dirty rect
+cargo run -p noita_probe -- follow 0 0 128 128 out --frames 120   # a TSV per game frame
+```
+
+The image is fixed-base (no ASLR), so addresses are absolute: the game state pointer at `0x122374C` (first dword is
+the frame, `+0x10` the `GridWorld`; `+0x14` is a smaller world-info object), the chunk table at `GridWorld+0x508` (512x512 chunk pointers indexed from chunk
+256; each chunk's first dword points at 512x512 cell pointers), loaded bounds at `+0x520`, the material names at
+`CellFactory+4` (`GridWorld+0x53C`), the cell's `CellData` at `+0x14` (material id at `+0x30`), and the class by
+vtable (liquid `0x100BB90`, gas `0x1007BCC`, fire `0x10096E0`, solid `0xFF8A6C`). `status` warns when the object
+it finds is not a `GridWorld`; `--grid 0xADDR` overrides it. The offsets are from the decompile and have been
+exercised against a mock memory image only; confirm with `status` against the live game first. Dumps taken while the
+game runs can tear (cells move during the read); pause the game (Esc) for a coherent snapshot. Engine material ids
+do not match the port's `materials.xml` order, so compare by name.
 
 Game controls: A/D walk, W jump/levitate, S crouch, mouse aims (sets facing), Space pause/resume, `.` step one
 frame while paused, R reset, 1/2/3 choose the left-mouse brush (sand/water/rock_static), right mouse rock_static,
@@ -137,7 +165,8 @@ see the liquid update rule below. ChangeMaterial (cell vt[38], `0x70f360`) retur
 SetCell (world vfn `0x20`, applied after all regions update) for air, a different cell type (cell vt[1] vs target
 `CellData+0x38`), or a burning cell (vt[29] `0x70f5d0` reads `+0x10`) whose target is not `burnable` (`+0x8E`);
 otherwise it changes the cell in place (liquid vt[13] `0x70d0b0`: material, static flag from `liquid_static`, color),
-keeping its burning state. Gas heat (`+0x2C`) remains unported.
+keeping its burning state. The gas update's heat block (`+0x2C > 0`: heat falls by `rand() % 3`, is mirrored into the
+fire intensity, and may spread fire) is not ported because no code sets a gas cell's heat.
 
 The full serializer field order and offsets (from `lifetime` through reactions) is dumped to
 `noita_files/re/celldata_fields.txt` by `re_tools disasm 0x6fba80 9000` filtered on field-name pushes.
@@ -229,7 +258,7 @@ at state 3 with zero velocity/flow. Empty space is a null cell pointer; a lookup
   and empty) and, if isolated, ChangeMaterial to air. Other cells: skip if
   resting with rest >= 50 (unless full) or
   already updated this frame; stamp frame; when `CellData+0x170` (`liquid_stains`) is set, call `0x70ce40` (stain a
-  neighbor; draws RNG, unported); a liquid whose age (`frame - birth`) has reached `lifetime` (`+0x154`, when > 0)
+  neighbor, see "Stains"); a liquid whose age (`frame - birth`) has reached `lifetime` (`+0x154`, when > 0)
   becomes air (ChangeMaterial); sand and slime update the rest counter (rest += 1 while <= 50 if resting,
   else 0); sand runs `0x70b2d0`; slime marks its cell, runs `0x70b7c0`, and marks its final cell; other liquids
   run liquid flow (`0x70bdc0`). Post-movement burning cells call shared burn hook `0x70fb10`, then `fire_hp >= 0` and
@@ -321,7 +350,7 @@ at state 3 with zero velocity/flow. Empty space is a null cell pointer; a lookup
     `0x72b170`) and stop. Skip if the rest counter is >= 100 on a non-full update. `liquid_static` gases set rest to
     100 and do not move; others stop when `rand() % 101 > gas_speed`, marking themselves only if the cell above is
     swappable. Then the heat/burning hooks (the ported burn hook), then
-    movement. Heat and neighbor interactions remain unported.
+    movement. A burning gas marks its cell after the hook (`0x70a670`).
   - Movement (`0x70a810`): `rand() % 101 < gas_upwards_speed` → move up if swappable; `rand() % 101 <
     gas_horizontal_speed` → move towards the direction if swappable, else the other way (reversing the direction);
     `rand() % 101 < gas_downwards_speed` → move down only into empty space; otherwise `rest += 1` up to 100. After
@@ -349,7 +378,17 @@ at state 3 with zero velocity/flow. Empty space is a null cell pointer; a lookup
   3. picks one active worker with the global `rand()` (`0x120741C`) and sets its full-scan flag (`+0x46C`, `0x7271cb`),
      so every active region is scanned whole every few frames;
   4. updates the workers on threads (dependency order not recovered). Regions outside the update window (around the
-     camera in the real game) are never swept; the port treats the whole world as the window.
+     camera in the real game) are never swept; the port treats the whole world as the window. Measured on the
+     running game with `noita_probe`: the window rect is `x, y, w, h` at `GridWorld+0x4A8` (here -192, -64, 559, 370,
+     so 9 x 6 = 54 tiles and a 54-frame sweep cycle), and moving cells outside it keep update stamps thousands of
+     frames old while those inside are 0-90 frames old (resting sand is only stamped on `full` updates, so some
+     inside regions read older).
+  The live game keeps one worker per region in a 32 x 32 grid (origins x -1536..1472, y -1024..1472; found by
+  scanning for the `GridWorldThreaded` vtable `0x1017B24`, 1024 objects of `0x5C8` bytes). The layout in the port is
+  confirmed: RNG state `+0x4`, full counter `+0x460` (cycles 0-10), full-scan flag `+0x46C`, origin `+0x470/+0x474`,
+  dirty rect `+0x480..+0x48C`. An empty rect is stored as min = origin + 64, max = origin (the port's emptier
+  encoding behaves the same after clamping to the region). Region RNGs are all different now (they started alike and
+  advanced), so the world seed cannot be read back from them.
   A worker update (`0x72a150`) scans its dirty rect (or the whole region when flagged), clamped to its own region,
   **bottom-to-top**, each row in a direction chosen by its own `rand() & 1` (1 = left-to-right), calling
   `CLiquidCell::Update(frame, full, worker, grid)`; the rect is reset first (`0x72b040`). Marks (world vfn `0x14`,
@@ -358,6 +397,16 @@ at state 3 with zero velocity/flow. Empty space is a null cell pointer; a lookup
   Resting sand does not mark itself, so settled areas are only rescanned by the sweep until disturbed. Every 11th update sets
   `full`, which only bypasses the sand sleep check. Bounds checks (world vfn `0x74`, `0x72b390`) allow moves within
   the region grown by 32 px on each side where that area is loaded (`0x725f40`, rect `+0x550`, copied to `+0x560`).
+- **Stains** (`0x70ce40`, called for moving non-static liquids with `liquid_stains != 0`, after the frame stamp): draws
+  `rand()` from the region RNG and stops unless `(rand() & 0x7F) >= 0x5F` (about 26% proceed); a second draw `% 3`
+  picks the cell left, right or below. The neighbor must be in the movable area, occupied, not a gas or fire cell
+  and `stainable` (`+0x8D`, default 1; seven reference materials set 0). A liquid neighbor is stained only when it
+  is `liquid_sand`, or when it is the same material and the stainer has `liquid_stains_self` (`+0x163`). The
+  stainer's color is `liquid_stains_custom_color` (`+0x174`, hex) when nonzero, else its own. Bits of
+  `liquid_stains`: 1 moves the neighbor's color 10% toward 0.7 of its base color (`+0x34`, if different), 2 moves it
+  20% toward the stain color, 4 moves it 20% toward `lerp(stain, base, 0.5)` (if different). The blend
+  (`0xddcd40`) is f32, truncating per channel, and keeps the second color's alpha. Cells carry a base color
+  that stains pull the current color back toward; colors are stored ARGB in the port.
 - **Cell color**: `SetMaterial` (vt[13] `0x70d0b0`) stores `GetColor(x, y, CellData)` (`0x7044a0`) on the cell, so the
   color travels with it. `GetColor` returns Graphics `color` (`CellData+0x64`) when there is no texture
   (`+0x88`); otherwise it samples the texture tiled, `tex[x mod w, y mod h]` (`0x7042c0`). With `randomize_colors`
@@ -452,6 +501,46 @@ serializers `0x9ec700`, `0x69dc00`; privates follow the documented order):
   (static or resting) and `platform_type != 0`; and one 4-neighbour is also type 1. Isolated pixels and non-sand
   liquids never block.
 
+### Recovered rules: particle cells (ported in `crates/sim`, `sim::particles` and `sim::noise`)
+
+`grid::GridParticles` (GridWorld `+0x540`) moves flying cells and specks, then lands them again. Records are 0x70 bytes.
+
+- **RNG**: a global Park-Miller generator (`0x1222388`, 16807 mod 2^31-1, state kept in a double; `0x44d0e0` float draw
+  `min + (float)(state * 4.656612875e-10) * (max - min)`, `0x44d140` int draw). Allocating a record (`0x712010`) draws
+  once and ignores the result.
+- **Defaults** (`0x712010`): alpha 0.5, acceleration `(0, 10)`, density 1000, 20 bounces, lifetime 1, attractor -1,
+  `+0x6B = 0x83` (has cell, collides, bit 7).
+- **Integrator** (`0x713e20`): age++; alpha += `+0x4C * dt` clamped to 0..1; attractor pull
+  `vel += (target - pos) * dt * strength`; acceleration (rising mode 1 uses a quarter of it); swirl
+  `amp > 0`: `n = simplex3(x' * f, y' * f, time)`, `a = (float)n * pi`, `vy += cos(a) * amp`, `vx -= sin(a) * amp`
+  with `(x', y')` the new position; damping `v -= v * d * dt` (flag `0x40` and `|v|^2 < 0.01` kills); lifetime (flag
+  `0x20`); a rising particle that is not from a cell and falls becomes normal; mode 2 teleports; otherwise the collision
+  stepper runs and the trailing position is `new + normalize(old - new) * speed * dt`.
+- **Simplex noise** (`0x872560`): Gustavson 3D with the Perlin permutation at `0xFDF530`, 12 edge gradients,
+  `0.6 - |d|^2` falloff and a `32.0` scale (the 0.6 radius leaves tiny seams of about 3e-4).
+- **Collision stepper** (`0x712390`): dies outside the update window; without the collide flag it just moves; else it
+  walks up to 60 unit steps from the last visited cell, looking at the material in each new cell. Empty cells and gas
+  or fire pass (a rising particle stops being rising). Liquid or solid cells: a rising particle passes only while it is
+  lighter (cell particles: or the same material) and loses a bounce; a normal particle with the bounce flag (30% of
+  cell particles; always for material specks) reflects along the dominant axis, adds `float(-10, 10)` when `|vx| < 10`,
+  scales by `float(0.1, 0.3)`, may reroll its lifetime (`float(0.5, 1.5)` when above 1 and `|v|^2 < 1600`) and loses the
+  bounce flag below `|v|^2 = 100`; otherwise it dies. A particle that dies stays at its last free position.
+- **Creation**: `AddAsParticle` (`0x7168c0`) copies the cell's color and density, centers on the cell (`+0.5`), draws
+  once for the 30% bounce flag and, when rising, sets density 0 if `vy > -50` and with 50% chance. `0x716ce0` makes a
+  cell-less speck with random lifetime `float(0.5, 1.5)`, flags `0x20|0x40`, and clears bit 7 with 75% chance.
+  `0x717670` turns a movable liquid grid cell (not static, not sand) into a rising particle.
+- **Dead pass** (`0x716600`): cell particles older than 5 frames inside a hittable box die; dead particles are removed
+  by moving the last record into the gap; a particle with a cell sets the cell position to its truncated position and
+  hands it to the landing queue (deadline arming when `+0x6C & 2`).
+- **Landing** (`0x71a590`, `0x71fde0`, `0x71fba0`): handed-off cells go to an immediate list. The delayed list is retried
+  from a random start within a budget (max 300 when an immediate list exists, halved down to 20 on failure, 500 after
+  any success; entries past their deadline are discarded; at most 100000 kept). Landing scans up to 128 rows upward from
+  the cell's position for an empty cell or a lighter non-solid one (the latter is displaced and re-queued); a solid cell
+  ends the scan; blocked cells more than 5 rows up drift a column (`rand() % 101 < 20`, then `< 50` picks right).
+  Failed immediate cells become delayed; displaced cells become the next immediate list.
+- Not ported: render lists, hit effects (audio, gore), the spark list, force rectangles, the `liquid_stains == 2` hook
+  (`0x715ca0`), the camera-local snapshot grid (the live world is read), and the callers (explosions, joint breaks).
+
 ### Not yet ported from these functions
 
 - Characters: knockback / precision jumping (`+0x140..`), the slippery game effect `0x16`, the crouch ceiling
@@ -461,9 +550,9 @@ serializers `0x9ec700`, `0x69dc00`; privates follow the documented order):
   platforming, collision, energy clamp).
 - Sprites: the rect-animation frame timing (locally a frame lasts `frame_wait` seconds of 1/60 s ticks and
   non-looping animations hold their last frame when finished).
-- Cells: splash-stat audio consumption (the sim records worker totals `+0xE0..+0xEC`); gas heat (`+0x2C`) and burning hooks; the
+- Cells: splash-stat audio consumption (the sim records worker totals `+0xE0..+0xEC`); burning hooks; the
   seed of the world RNG used to construct cells outside a worker update; the reaction pieces listed under Reactions;
-  solids; stains; the order in which regions update (the
+  solids; the order in which regions update (the
   threaded dependency scheduling in `0x726340`), which regions count as loaded, and the global RNG's seed; the
   simulation rate.
 
