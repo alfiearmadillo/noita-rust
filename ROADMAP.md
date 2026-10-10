@@ -79,8 +79,10 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
    system update order.
 9. [ ] Component set: fields and defaults from `component_documentation.txt`, ported system by system as needed.
 10. [ ] Lua runtime (LuaJIT / Lua 5.1) and the API from `lua_api_documentation.txt`; all script hooks.
-11. [ ] RNG: world seed, `SetRandomSeed(x, y)` and every RNG path (needed for identical wands, spells, biomes,
-    secrets).
+11. [~] RNG: world seed, `SetRandomSeed(x, y)` and every RNG path (needed for identical wands, spells, biomes,
+    secrets). Done: the `Random` class, `SetRandomSeed`, `Random*`, `ProceduralRandom*`, `RandomDistribution*`
+    (`sim::random`, unverified against a live game). Missing: world-seed generation, wiring into the Lua runtime and
+    the entity-side RNG users.
 12. [ ] Messages/events: damage, death, collision, pickup.
 
 ## Phase 3: Player and combat slice

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 pub mod noise;
 pub mod particles;
+pub mod random;
 mod reactions;
 
 pub use reactions::{Direction, Reaction};

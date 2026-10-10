@@ -588,6 +588,37 @@ serializers `0x9ec700`, `0x69dc00`; privates follow the documented order):
 
 ### Not yet ported from these functions
 
+### Recovered rules: script RNG (ported in `crates/sim`, `sim::random`)
+
+The `Random` class is one `double` holding a Park-Miller state. The game has two global instances, both zero before use:
+`0x1222388` (particles, `0x44d0e0` / `0x44d140`) and `0x1221d18` (the `Random*` script functions, plus engine rolls such
+as the Sampo orb `Random(0, 999) == 999` in `0x78e640`).
+
+- **Step** (`0x485a60`): `s = (int)state; v = s * 16807 - (s / 127773) * 0x7FFFFFFF` in wrapping 32-bit arithmetic,
+  `+0x7FFFFFFF` when `v < 1`. Draws: unit `v * 4.656612875e-10` (double); float `(float)(v * 4.656612875e-10) *
+  (max - min) + min` (`0x485ab0`); int `min - (int)((max - min + 1) * (v * -4.656612875e-10))` (`0x485b10`).
+- **`SetRandomSeed(x, y)`** (`0x7c9300` -> `0x485890`): the seed is `world_seed (0x1205004) + NEW_GAME_PLUS_COUNT
+  (0x1205024)`. With `t = seed ^ 0x93262E6F`: `a = (t & 0xFFF) + x`, `b = ((t >> 12) & 0xFFF) + y`;
+  `ia = (int)(a * 134217727)` (CRT double-to-int64, low 32 bits, `0xdfdfa1`);
+  `ib = (int)((|b| < 102400 && |a| > 1) ? (b * 3483.328 + (uint)ia) * b : b * 134217727)`;
+  `h = mix(ia, ib, seed)` where `mix` is Bob Jenkins' lookup2 96-bit mix returning `c` (`0x8720c0`);
+  `state = (uint)h / 4294967295 * 2147483639 + 1` (halved if it reached 2147483647), then one step plus `seed & 3` more.
+- **Lua functions**: `Random()` / `Randomf()` return `(float)(v * 4.656612875e-10)`; `Random(a)` is `int(0, a)`, `Random(a,
+  b)` is `int(a, b)`; `Randomf(a)` is `float(0, a)`, `Randomf(a, b)` is `float(a, b)`. `ProceduralRandom*` seed a stack-local
+  generator for `(x, y)` (the shared state is untouched): 2 args give the unit double (`ProceduralRandomi` rounds it half
+  away from zero, i.e. 0 or 1), 3 args use `min = 0`, 4 args `(min, max)`; `ProceduralRandom` with 3 args is an int and
+  with 4 args a float, `Procedural...f` always float, `...i` always int.
+- **`RandomDistribution`** (`0x7ca080`, `0x844100`): uniform when `sharpness == 0`. Otherwise `m = (mean - min) / (max -
+  min)` (float) and up to 100 rejection rounds: candidate `x` and roll `r` are two consecutive draws (the global keeps
+  only the second step), accept `x` when `(1 - |x - m|) * baseline > r`, or when `|x - m| < 0.5` and
+  `(float)pow((float)sin((0.5 - m + x) * 3.1415), sharpness) >= r`; after 100 rejections one more draw is returned.
+  The int variant returns `roundf(x * span) + min`, the float variant `x * span + min`. Defaults: sharpness 1,
+  baseline 0.005.
+- `set_seed` is derived from the disassembly and not yet compared against a running game; the world-seed generator
+  (`0x883540`, time-seeded) and the entity-side users of these draws are not ported.
+
+### Not yet ported from these functions
+
 - Characters: knockback / precision jumping (`+0x140..`), the slippery game effect `0x16`, the crouch ceiling
   sensor, AI `mJumpVelocity`, game effects that gate flying
   (`0x51`), jetpack particles and audio, liquid splash events, `effect_hit_ground`, the Lua-visible

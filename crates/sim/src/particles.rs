@@ -16,51 +16,9 @@ use crate::{AIR, Cell, CellType, MaterialId, MaterialProps, World};
 mod explosion;
 pub use explosion::{ExplosionConfig, ExplosionReport, QueuedExplosion, RAY_COUNT};
 
-/// The reference's particle RNG: Park-Miller (16807, modulus 2^31-1) with its state kept in a
-/// double (`0x1222388`; steps at `0x44d0e0`, `0x44d140`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ParticleRng {
-    state: f64,
-}
-
-impl ParticleRng {
-    /// `seed` is mapped into the valid state range `1..2^31-1`.
-    pub fn new(seed: u32) -> Self {
-        Self {
-            state: f64::from(seed % 0x7FFF_FFFE + 1),
-        }
-    }
-
-    pub fn state(&self) -> i32 {
-        self.state as i32
-    }
-
-    fn step(&mut self) -> i32 {
-        let s = self.state as i32;
-        let q = s / 0x1F31D;
-        let mut v = s
-            .wrapping_mul(0x41A7)
-            .wrapping_sub(q.wrapping_mul(0x7FFF_FFFF));
-        if v < 1 {
-            v = v.wrapping_add(0x7FFF_FFFF);
-        }
-        self.state = f64::from(v);
-        v
-    }
-
-    /// `min + next * 4.656612875e-10 * (max - min)` in single precision (`0x44d0e0`).
-    pub fn float(&mut self, min: f32, max: f32) -> f32 {
-        let span = max - min;
-        let v = self.step();
-        ((f64::from(v) * 4.656612875e-10) as f32) * span + min
-    }
-
-    /// Integer in `min..=max` (`0x44d140`).
-    pub fn int(&mut self, min: i32, max: i32) -> i32 {
-        let v = self.step();
-        min - (f64::from(max - min + 1) * f64::from(v) * -4.656612875e-10) as i32
-    }
-}
+/// The reference's particle RNG (`0x1222388`; steps at `0x44d0e0`, `0x44d140`): the same
+/// Park-Miller `Random` class as the script generator.
+pub use crate::random::Random as ParticleRng;
 
 /// `+0x6A`: set when created from a cell that the particle may later return to.
 pub const FLAG_FROM_CELL: u8 = 0x01;
