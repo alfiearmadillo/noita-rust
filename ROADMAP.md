@@ -76,12 +76,15 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 ## Phase 2: Engine skeleton
 
 8. [~] Entity/component system: entity XML loading, `<Base>` inheritance, tags, children, transforms, recovered
-   system update order. Done: template loader with `<Base>` inheritance (`crates/entity`, all reference entity files
-   resolve). Missing: typed component values, instantiation, ids, transforms, the live entity store.
-9. [ ] Component set: fields and defaults from `component_documentation.txt`, ported system by system as needed.
+   system update order. Done: template loader with `<Base>` inheritance, live entity store with ids, tags, transforms,
+   hierarchy and typed component values from `component_documentation.txt` (`crates/entity`). Missing: component
+   systems, the recovered update order, serialization, spatial queries as the engine does them.
+9. [~] Component set: fields and defaults from `component_documentation.txt`, ported system by system as needed.
+   Done: all 154 documented component types with typed members and defaults; nested object members are untyped.
 10. [~] Lua runtime (LuaJIT / Lua 5.1) and the API from `lua_api_documentation.txt`; all script hooks.
     Done: LuaJIT via `mlua` (`crates/script`), `dofile` / `dofile_once` / `loadfile` with a rooted virtual file system,
-    `print`, the random API, the gun API. Missing: the other ~300 API functions (they need the entity layer).
+    `print`, the random API, the gun API, the entity/component API, globals. Missing: the other ~250 API functions
+    (most need component systems).
 11. [~] RNG: world seed, `SetRandomSeed(x, y)` and every RNG path (needed for identical wands, spells, biomes,
     secrets). Done: the `Random` class, `SetRandomSeed`, `Random*`, `ProceduralRandom*`, `RandomDistribution*`
     (`sim::random`, unverified against a live game). Missing: world-seed generation, wiring into the Lua runtime and
@@ -107,7 +110,7 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 18. [~] Spells: run the reference `gun.lua` / `gun_actions.lua` / extra modifiers in the Lua runtime; all ~400 spells
     with modifiers, triggers, multicasts, wrapping and draw/shuffle bugs. Done: `gun.lua` runs unchanged and the
     engine-side command recorder reproduces projectile/trigger/shot structure, mana, reload and the shuffle
-    (`script::gun`). Missing: spawning the projectiles, spell actions that call other script API functions, extra modifiers.
+    (`script::gun`); all 422 spells cast without script errors. Missing: spawning the projectiles, extra modifiers.
 19. [ ] Items and inventory: wands, flasks (material inventory, spray, throw), pickups, quick/full inventory, wand
     editing.
 20. [ ] Enemy AI: AI components, pathfinding grid, herd relations; enemies from `data/entities/animals`.

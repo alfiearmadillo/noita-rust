@@ -2,6 +2,7 @@
 //! loading rules (`dofile_once`, a virtual file system rooted at the extracted data) and the
 //! script API functions as they get ported.
 
+mod entity_api;
 pub mod gun;
 mod random_api;
 
@@ -25,6 +26,20 @@ pub(crate) struct ScriptState {
     pub frame: Cell<i32>,
     /// `GlobalsSetValue` / `GlobalsGetValue`: string keys shared by every script.
     pub globals: RefCell<HashMap<String, String>>,
+    pub world: RefCell<entity::world::World>,
+    pub loader: RefCell<entity::Loader<entity::DiskFiles>>,
+    /// `GetUpdatedEntityID()`: the entity whose script is running.
+    pub current_entity: Cell<i32>,
+    pub current_component: Cell<i32>,
+    /// Draws for `$[a-b]` ranges in entity files (the engine's source is unverified).
+    pub entity_rng: RefCell<sim::random::Random>,
+}
+
+impl ScriptState {
+    /// The `$[a-b]` range source for entity instantiation.
+    pub(crate) fn entity_range_rng(&self) -> impl FnMut(i32, i32) -> i32 + '_ {
+        |a, b| self.entity_rng.borrow_mut().int(a, b)
+    }
 }
 
 pub struct Runtime {
@@ -35,9 +50,19 @@ impl Runtime {
     /// A state whose `data/...` paths resolve under `root` (the extracted `noita_files`).
     pub fn new(root: impl Into<PathBuf>, world_seed: i32) -> mlua::Result<Self> {
         let lua = Lua::new();
+        let root: PathBuf = root.into();
+        let schema =
+            std::fs::read_to_string(root.join("install/tools_modding/component_documentation.txt"))
+                .map(|text| entity::schema::Schema::parse(&text))
+                .unwrap_or_default();
         lua.set_app_data(ScriptState {
             random: RefCell::new(ScriptRandom::new(world_seed)),
-            root: root.into(),
+            world: RefCell::new(entity::world::World::new(std::sync::Arc::new(schema))),
+            loader: RefCell::new(entity::Loader::new(entity::DiskFiles(root.clone()))),
+            current_entity: Cell::new(0),
+            current_component: Cell::new(0),
+            entity_rng: RefCell::new(sim::random::Random::new(world_seed as u32)),
+            root,
             output: RefCell::new(Vec::new()),
             commands: RefCell::new(Vec::new()),
             frame: Cell::new(0),
@@ -45,6 +70,7 @@ impl Runtime {
         });
         install_base(&lua)?;
         random_api::install(&lua)?;
+        entity_api::install(&lua)?;
         Ok(Self { lua })
     }
 
@@ -64,6 +90,22 @@ impl Runtime {
             .app_data_ref::<ScriptState>()
             .map(|s| s.output.borrow().clone())
             .unwrap_or_default()
+    }
+
+    /// Runs `f` on the entity store.
+    pub fn with_world<R>(&self, f: impl FnOnce(&mut entity::world::World) -> R) -> R {
+        let state = self
+            .lua
+            .app_data_ref::<ScriptState>()
+            .expect("script state is installed in Runtime::new");
+        f(&mut state.world.borrow_mut())
+    }
+
+    /// Sets what `GetUpdatedEntityID()` returns.
+    pub fn set_updated_entity(&self, id: i32) {
+        if let Some(s) = self.lua.app_data_ref::<ScriptState>() {
+            s.current_entity.set(id);
+        }
     }
 
     /// Sets the new-game-plus count mixed into every position-based random seed.

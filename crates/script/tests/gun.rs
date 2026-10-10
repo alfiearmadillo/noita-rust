@@ -278,3 +278,33 @@ fn the_shuffle_uses_the_frame_seeded_script_generator() {
     }
     assert_eq!(played, shuffled);
 }
+
+#[test]
+fn every_reference_spell_casts_without_script_errors() {
+    let Some(gun) = gun() else { return };
+    // Spell actions look at the entity that holds the wand.
+    let holder = gun.runtime().with_world(|w| w.create_entity("wand"));
+    gun.runtime().set_updated_entity(holder);
+    let actions: mlua::Table = gun.runtime().lua().globals().get("actions").unwrap();
+    let ids: Vec<String> = actions
+        .sequence_values::<mlua::Table>()
+        .map(|a| a.unwrap().get::<String>("id").unwrap())
+        .collect();
+    assert!(ids.len() >= 400);
+    let mut failures = Vec::new();
+    for (n, id) in ids.iter().enumerate() {
+        gun.set_frame(100 + n as i32);
+        let mut cards = vec![DeckCard::new(id, 1)];
+        cards.extend((2..=4).map(|i| DeckCard::new("LIGHT_BULLET", i)));
+        let result = gun
+            .set_deck(&cards, false)
+            .and_then(|()| gun.shoot(1000.0, true));
+        if let Err(e) = result {
+            failures.push(format!(
+                "{id}: {}",
+                e.to_string().lines().next().unwrap_or("")
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}

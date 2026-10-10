@@ -8,6 +8,7 @@ description = "Lua runtime for the reference game scripts (LuaJIT, Noita's scrip
 
 [dependencies]
 mlua = { version = "0.12.2", features = ["luajit", "vendored"] }
+entity = { path = "../entity" }
 sim = { path = "../sim" }
 
 [lints]

@@ -665,9 +665,16 @@ that is a no-op without mods). Script API functions are native handlers register
   `_draw_actions_for_shot(can_reload)` and `_handle_reload()` (returns the mana left). `script::gun::Gun` wraps these and
   returns the recorded `GunCommand` list; tests cover single spells, modifiers, draw-many, triggers, mana, reload time and
   the frame-seeded shuffle against the real `gun_actions.lua`.
-- Not ported: turning the commands into projectile entities (needs the entity/component layer), the progress flags,
-  per-item use bookkeeping, and every other script API function (`EntityGetFirstComponent`, `GameGetFrameNum` is a
-  settable counter, ...). Spell actions that call those will fail until the functions exist.
+- All 422 spells of the reference `gun_actions.lua` cast without script errors
+  (`every_reference_spell_casts_without_script_errors`, `examples/spell_sweep.rs`); beyond the gun API they only need
+  `GetUpdatedEntityID`, `GlobalsGetValue`, `EntityGetWithTag`, `EntityGetTransform`, `EntityGetInRadiusWithTag`,
+  `EntityGetFirstComponent` and `ComponentGetValue2`.
+- **Entity API** (`script::entity_api`, signatures from `lua_api_documentation.txt`; the engine handlers are not decompiled):
+  the `Entity*` create / load / kill / transform / tag / hierarchy / component queries and the `Component*` value
+  accessors run on `entity::world::World`. Radius queries count the edge as inside, `$[a-b]` ranges draw from a separate
+  generator seeded with the world seed. Edge cases are unverified against the engine.
+- Not ported: turning the commands into projectile entities with behavior, the progress flags, per-item use bookkeeping and
+  the remaining ~250 script API functions.
 
 ### Recovered rules: entity files (ported in `crates/entity`)
 

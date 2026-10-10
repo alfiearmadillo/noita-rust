@@ -14,6 +14,9 @@ fn main() {
         .sequence_values::<mlua::Table>()
         .map(|a| a.unwrap().get::<String>("id").unwrap())
         .collect();
+    // Spell actions look at the entity that holds the wand.
+    let holder = gun.runtime().with_world(|w| w.create_entity("wand"));
+    gun.runtime().set_updated_entity(holder);
     let mut failures: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut ok = 0;
     for (n, id) in ids.iter().enumerate() {

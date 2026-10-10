@@ -11,6 +11,9 @@
 
 mod xml;
 
+pub mod schema;
+pub mod world;
+
 use std::collections::HashMap;
 
 /// A parsed element: tag, attributes in document order, children.
