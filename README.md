@@ -131,6 +131,8 @@ latest release notes dated Aug 12 2024. Source column: **data** = game data file
 | `+0x188` / `+0x18C` | `liquid_damping` / `liquid_flow_speed` (f32) | 0.8 / 0.9 |
 | `+0x190` | `liquid_sand_never_box2d` (bool) | 0 |
 | `+0x10D` | `slippery` (bool) | 0 |
+| `+0x8C` | `cell_holes_in_texture` (bool): the cell constructor (`0x7048c0`) builds nothing where the texture alpha is 0 (3 reference materials: `steelmoss_static`, `vine`, `root`) | 0 |
+| `+0x104` / `+0x108` / `+0x158` | `durability` / `crackability` / `hp` (int) | 0 / 0 / 100 |
 
 Fire-related `CellData` attributes (`burnable`, `on_fire`, `fire_hp`, `autoignition_temperature`,
 `temperature_of_fire`, `generates_smoke`, `generates_flames`, `requires_oxygen`, and the three `on_fire_*_material`

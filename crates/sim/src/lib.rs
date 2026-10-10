@@ -46,6 +46,9 @@ pub struct MaterialProps {
     pub liquid_stains_custom_color: u32,
     /// `+0x8D`: neighbors of other cells may stain it (constructor default 1).
     pub stainable: bool,
+    /// `+0x8C` `cell_holes_in_texture`: no cell is created where the texture is fully transparent
+    /// (0x7048c0).
+    pub cell_holes_in_texture: bool,
     pub liquid_gravity: f32,
     pub liquid_viscosity: i32,
     pub liquid_sticks_to_ceiling: i32,
@@ -101,6 +104,7 @@ impl MaterialProps {
             liquid_stains: 0,
             liquid_stains_custom_color: 0,
             stainable: true,
+            cell_holes_in_texture: false,
             liquid_gravity: 0.5,
             liquid_viscosity: 50,
             liquid_sticks_to_ceiling: 0,
@@ -763,6 +767,15 @@ impl World {
             .get(material)
             .unwrap_or_else(|| panic!("unknown material {material:?}"));
         let color = props.color_at(x, y);
+        if props.cell_holes_in_texture && color >> 24 == 0 {
+            // 0x7048c0 builds no cell; SetCell then leaves the slot empty.
+            if !self.in_bounds(x, y) {
+                return Err(OutOfBounds { x, y });
+            }
+            *self.cell_mut(x, y).expect("in bounds") = Cell::EMPTY;
+            self.mark(x, y);
+            return Ok(());
+        }
         let is_liquid = props.cell_type == CellType::Liquid;
         let mut cell = Cell::new(material, color, is_liquid && props.liquid_static);
         cell.burning = props.on_fire || props.cell_type == CellType::Fire;
