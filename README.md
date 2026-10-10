@@ -158,8 +158,8 @@ with `requires_oxygen` the intensity then drops by 1 (no flame placed) or resets
 cell stops burning at intensity < 1; `rand() % 101 < generates_smoke` does the same for smoke (`0x70f800`,
 material `+0xFC`, no intensity change); a cell still burning then spreads fire (`0x70f9e0`) and marks itself. A spawn
 picks `rand() % 3` for the cell up-left, above or up-right, needs it movable and empty, and queues a SetCell without
-replace (workers' vfn `0x20` returns null, so the amount stamp on the new cell never happens). Unported: the
-`CellData+0x100` particle-effect roll (draws `rand()`), the spawn's heat aggregates (`worker+0x170/+0x1B8`) and queue
+replace (workers' vfn `0x20` returns null, so the amount stamp on the new cell never happens). The `CellData+0x100`
+`ExplosionConfig` roll is ported (see Explosions below). Unported: the spawn's heat aggregates (`worker+0x170/+0x1B8`) and queue
 `+0x4D8` (vfn `0x3c`). Static-liquid fire-HP conversion runs only for burning cells;
 see the liquid update rule below. ChangeMaterial (cell vt[38], `0x70f360`) returns for the same material, queues a
 SetCell (world vfn `0x20`, applied after all regions update) for air, a different cell type (cell vt[1] vs target
@@ -233,9 +233,9 @@ reaction rules below). Normalized, inherited material tags are available on `Mat
   dispatcher read worker bytes `+0x452`/`+0x453`, but no instruction in the exe writes them (byte-pattern search;
   only the dispatcher reads them), so they never fire and are left out.
 - **Unported**: cosmetic blob particles,
-  `convert_all` (world vfn `0x34`; unused by the reference data), entity spawns, audio, attached explosions (which
-  draw from the RNG), and a liquid queue gated by `CellData+0x21C`
-  (`0x70cae5`, world vfn `0x88`).
+  `convert_all` (world vfn `0x34`; unused by the reference data), entity spawns, audio, and a liquid queue gated by
+  `CellData+0x21C`
+  (`0x70cae5`, world vfn `0x88`). A reaction's attached `ExplosionConfig` is ported (see Explosions).
 
 ### Recovered rules (ported in `crates/sim`)
 
@@ -539,7 +539,47 @@ serializers `0x9ec700`, `0x69dc00`; privates follow the documented order):
   ends the scan; blocked cells more than 5 rows up drift a column (`rand() % 101 < 20`, then `< 50` picks right).
   Failed immediate cells become delayed; displaced cells become the next immediate list.
 - Not ported: render lists, hit effects (audio, gore), the spark list, force rectangles, the `liquid_stains == 2` hook
-  (`0x715ca0`), the camera-local snapshot grid (the live world is read), and the callers (explosions, joint breaks).
+  (`0x715ca0`), the camera-local snapshot grid (the live world is read), and the joint-break caller (`0x719670`).
+
+### Recovered rules: explosions (ported in `crates/sim`, `sim::particles::ExplosionConfig` / `Particles::explode`)
+
+`ConfigExplosion` is `0x657960` (18 KB; decompile it with `/force_decompile`). Only its cell effects are ported.
+
+- **Config** (`ExplosionConfig`, serializer `0x4bb980`, constructor defaults `0x4b2780`): `+0x08` radius 20, `+0x78`
+  hole 1, `+0x79` destroy non-platform solids 1, `+0x8C` `hole_destroy_liquid` 0, `+0x8D` `hole_destroy_physics_dynamic`
+  1, `+0x90` `create_cell_material` `fire`, `+0xA8` its percent 5, `+0xB0` `spark_material` `spark`, `+0xC8`..`+0xDA`
+  material sparks, `+0xDB` sparks 1 with counts 7..20 and inner radius 0.333, `+0xE8` stains 1, `+0xEC` stain radius 0
+  (= 0.4 radius), `+0xF0` `ray_energy` 20000, `+0xF4` `max_durability_to_destroy` 10, `+0x10C..+0x120`
+  `cell_explosion_power/radius_min/radius_max/damage_required/probability` (1 / 5 / 150 / 100 / 0). Cells carry `hp`
+  (`Cell+4`, from `CellData+0x158` `hp`, default 100) and materials a `durability` (`+0x104`, default 0).
+- **Triggers**: a burning cell whose material has an `ExplosionConfig` (burn hook `0x70fb10`, only while no explosion is
+  queued) rolls `(rand/32767) * min(damage_required + 0.5, 100) >= damage_required`, then radius
+  `min(sqrt(power * (rand/32767 * 0.5 + 0.75)), 150)`; a reaction with a config (`0x70ebf0`) rolls
+  `rand/32767 < cell_explosion_probability` and a radius in `[radius_min, radius_max]`. Both queue the config copy
+  (`never_cache` cleared) on the worker (`0x72b3d0`); the flush (`0x72abf0`) resets the counter. The dispatcher
+  (`0x657410`, `Particles::run_explosions`) runs one new explosion per frame immediately and defers the rest to the next
+  frame start (`0x657300`) unless `never_cache`; delay ids and timers are not ported.
+- **Rays** (`0x656b10`): 360 rays from the center toward `center - R (cos t, sin t)`. A ray steps one cell at a time
+  (at most 0x800); only sand (`liquid_sand`) and solid cells interact: `take = min(hp, energy)`, the ray's absorb value is
+  the largest take, and it stops when the energy is gone or the cell's durability exceeds `max_durability_to_destroy`
+  (consuming one global `rand()`, whose parity adds 1 to the returned squared distance).
+- **Cell loop**: after a one-time 360-entry stain table (`0x12059f0`, 360 `rand()` draws) and per-explosion draws for a
+  stain offset (`% 181`) and a jag phase, every cell of the square of half-width `(int)(R + stain)` draws three `rand()`s
+  (velocity jitter x, y and speed `100..200`) whatever it holds. Its ray index is
+  `clamp(floor(atan2(dy, dx) * 57.2958 + 179 +- 0.5), 0, 359)`; explosions above radius 60 shorten each ray by
+  `sin(...)^2 * min(0.35 * len2, 100)`. An empty cell inside the ray may be filled with `create_cell_material`. A
+  sand or solid cell outside the hole (or beyond its ray) within the stain radius is darkened by
+  `(0.5..0.7) * table * t^2` when its material is stainable (`Color_Darken` `0x70e760`). A cell inside the hole loses
+  the ray's absorb value from `hp` (if durable enough); at `hp < 1` sand, solids and (with `hole_destroy_liquid`) liquids
+  are destroyed: a 5..10 s material speck with the cell's color is thrown, then the cell becomes `create_cell_material`
+  (`create_cell_probability`), or `explosion_dirt` (sand, global `0x1207028`, 0 in the image), or is removed (waking the
+  cell above). Other liquids are not removed: `create_cell_probability` may replace them, else they become rising
+  particles with upward velocity (`0x717670`).
+- **Sparks**: material sparks per destroyed cell (`+0xD8`, off by default; the "real" cell variant is not ported), and
+  the `sparks_enabled` block places `spark_material` specks (velocity 4 * offset, life 5..10 s) where the ray reached.
+- Not ported: entity damage, knockback, physics bodies, cracks, electricity, light, camera shake, audio, pixel sprites,
+  the gore branch (`CellData+0x1C4`, unidentified), vegetation shake and the stats vector; their `rand()` draws are
+  therefore missing, so RNG streams only match the reference up to the first such effect.
 
 ### Not yet ported from these functions
 

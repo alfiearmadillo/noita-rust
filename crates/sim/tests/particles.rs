@@ -1,6 +1,6 @@
 //! `grid::GridParticles`: flying cells and their landing.
 
-use sim::particles::{FLAG_BOUNCE, ParticleRng, Particles};
+use sim::particles::{FLAG_BOUNCE, ParticleRng, Particles, Speck};
 use sim::{AIR, CellType, MaterialId, MaterialProps, Materials, World};
 
 const SAND: MaterialId = MaterialId(1);
@@ -66,7 +66,16 @@ fn int_and_float_draws_stay_in_range() {
 fn a_free_particle_accelerates_with_gravity() {
     let mut w = world();
     let mut ps = Particles::new(1);
-    assert!(ps.add_from_material(&w, SAND, (50, 10), (0.0, 0.0), None, false, false, false));
+    let speck = Speck {
+        material: SAND,
+        pos: (50.0, 10.0),
+        vel: (0.0, 0.0),
+        color: None,
+        life: (5.0, 10.0),
+        allow_occupied: true,
+        in_grid: false,
+    };
+    assert!(ps.add_from_material(&w, speck));
     for _ in 0..5 {
         ps.update(&mut w, 0.1, 0.0);
     }

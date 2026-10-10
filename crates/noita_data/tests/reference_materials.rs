@@ -201,6 +201,41 @@ fn reference_sim_table_has_air_first_and_sand_props() {
 }
 
 #[test]
+fn reference_material_explosion_configs_reach_the_sim_table() {
+    let Some(all) = reference_materials() else {
+        return;
+    };
+    let table = noita_data::sim_materials::to_sim(&all, |_| None);
+    let with_config = (0..table.len())
+        .filter(|&i| {
+            table
+                .get(sim::MaterialId(i as u16))
+                .is_some_and(|m| m.explosion.is_some())
+        })
+        .count();
+    assert!(with_config >= 15, "{with_config} materials carry a config");
+    let salt = table.get(table.find("sodium_unstable").unwrap()).unwrap();
+    let config = salt.explosion.as_ref().expect("sodium_unstable explodes");
+    assert_eq!(config.ray_energy, 50_000);
+    assert_eq!(config.create_cell_probability, 100);
+    assert_eq!(config.cell_explosion_power, 20.0);
+    assert_eq!(config.cell_explosion_damage_required, 0.0);
+    assert_eq!(config.cell_explosion_radius.0, 5.0);
+}
+
+#[test]
+fn reference_hp_and_durability_reach_the_sim_table() {
+    let Some(all) = reference_materials() else {
+        return;
+    };
+    let table = noita_data::sim_materials::to_sim(&all, |_| None);
+    let sand = table.get(table.find("sand").unwrap()).unwrap();
+    assert_eq!((sand.hp, sand.durability), (800, 4));
+    let sand_static = table.get(table.find("sand_static").unwrap()).unwrap();
+    assert_eq!((sand_static.hp, sand_static.durability), (19_000, 10));
+}
+
+#[test]
 fn reference_fire_and_spark_properties_reach_sim_table() {
     let Some(all) = reference_materials() else {
         return;

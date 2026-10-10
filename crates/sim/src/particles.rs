@@ -13,6 +13,9 @@
 use crate::noise::simplex3;
 use crate::{AIR, Cell, CellType, MaterialId, MaterialProps, World};
 
+mod explosion;
+pub use explosion::{ExplosionConfig, ExplosionReport, QueuedExplosion, RAY_COUNT};
+
 /// The reference's particle RNG: Park-Miller (16807, modulus 2^31-1) with its state kept in a
 /// double (`0x1222388`; steps at `0x44d0e0`, `0x44d140`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,6 +72,8 @@ pub const FLAG_DEAD: u8 = 0x10;
 pub const FLAG_BOUNCE: u8 = 0x20;
 /// `+0x6A`: its material has `liquid_stains == 2`.
 pub const FLAG_STAINS: u8 = 0x80;
+/// `+0x6A`: set on explosion sparks; its effect is not decoded.
+pub const FLAG_UNKNOWN_08: u8 = 0x08;
 /// `+0x6B`: carries a cell back into the grid when it dies.
 pub const FLAG_HAS_CELL: u8 = 0x01;
 /// `+0x6B`: collides with the grid.
@@ -185,6 +190,22 @@ impl Particle {
     }
 }
 
+/// Arguments of the material-speck creator (`0x716ce0`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Speck {
+    pub material: MaterialId,
+    pub pos: (f32, f32),
+    pub vel: (f32, f32),
+    /// ARGB; the material's color at the position when `None`.
+    pub color: Option<u32>,
+    /// Lifetime range in seconds; the draw picks within it.
+    pub life: (f32, f32),
+    /// Skip the "position must be empty" check.
+    pub allow_occupied: bool,
+    /// Require the position to lie in the local grid, and collide with the world.
+    pub in_grid: bool,
+}
+
 /// A cell on its way back into the grid (the cell object plus its `+0x8`/`+0xC` landing fields).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Landing {
@@ -247,6 +268,12 @@ pub struct Particles {
     local_size: (i32, i32),
     /// Particles outside this inclusive window die (`obj+0x10..+0x1C`).
     window: Option<(i32, i32, i32, i32)>,
+    /// `0x12059f0`: noisy stain strength per degree, filled by the first explosion.
+    stain_table: Option<[f32; RAY_COUNT]>,
+    /// Explosions held back by the dispatcher's one-per-frame limit (`0x657410`).
+    deferred_explosions: Vec<QueuedExplosion>,
+    /// `DAT_01206fd4`: explosions run this frame.
+    explosions_this_frame: u32,
 }
 
 impl Particles {
@@ -263,6 +290,9 @@ impl Particles {
             local_origin: (0, 0),
             local_size: (i32::MAX, i32::MAX),
             window: None,
+            stain_table: None,
+            deferred_explosions: Vec::new(),
+            explosions_this_frame: 0,
         }
     }
 
@@ -363,7 +393,10 @@ impl Particles {
         let Some(props) = world.materials().get(cell.material) else {
             return false;
         };
-        let settled = cell.is_static || props.liquid_sand_never_box2d;
+        let settled = cell.is_static
+            || (!props.liquid_sand_never_box2d
+                && props.liquid_sand
+                && cell.state == crate::STATE_RESTING);
         if cell.material == AIR
             || props.cell_type != CellType::Liquid
             || settled
@@ -371,31 +404,26 @@ impl Particles {
         {
             return false;
         }
-        world.mark_area((x - 1, y - 1), (x + 1, y + 1));
         *world.cell_mut(x, y).expect("in bounds") = Cell::EMPTY;
         self.add_cell(world, cell, (x, y), vel, true, true)
     }
 
-    /// `0x716ce0`: a cosmetic particle of `material` (no cell to return) at `(x, y)`; the
-    /// lifetime is random. `color` is the speck's ARGB (the material's color at the position
-    /// when `None`). `check_local_grid` requires the position to lie inside the local grid;
-    /// `collide` enables collisions.
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_from_material(
-        &mut self,
-        world: &World,
-        material: MaterialId,
-        (x, y): (i32, i32),
-        vel: (f32, f32),
-        color: Option<u32>,
-        collide: bool,
-        check_local_grid: bool,
-        require_empty: bool,
-    ) -> bool {
-        if check_local_grid && !self.in_local_grid(x, y) {
+    /// `0x716ce0`: a cosmetic particle of `material` (no cell to return) at `(x, y)`.
+    pub fn add_from_material(&mut self, world: &World, speck: Speck) -> bool {
+        let Speck {
+            material,
+            pos: (px, py),
+            vel,
+            color,
+            life,
+            allow_occupied,
+            in_grid,
+        } = speck;
+        let (x, y) = (px as i32, py as i32);
+        if in_grid && !self.in_local_grid(x, y) {
             return false;
         }
-        if require_empty && world.get(x, y).is_some_and(|m| m != AIR) {
+        if !allow_occupied && world.get(x, y).is_some_and(|m| m != AIR) {
             return false;
         }
         let Some(props) = world.materials().get(material) else {
@@ -405,11 +433,11 @@ impl Particles {
             return false;
         }
         let mut p = self.new_record();
-        p.pos = (x as f32 + 0.5, y as f32 + 0.5);
+        p.pos = (px + 0.5, py + 0.5);
         p.last_cell = p.pos;
         p.prev = p.pos;
         p.set_color(color.unwrap_or_else(|| props.color_at(x, y)));
-        if collide {
+        if in_grid {
             p.flags_b |= FLAG_COLLIDE;
         } else {
             p.flags_b &= !FLAG_COLLIDE;
@@ -417,7 +445,7 @@ impl Particles {
         p.vel = vel;
         p.flags_b |= FLAG_LIFETIME;
         p.flags_a |= FLAG_BOUNCE | 0x40;
-        p.lifetime = self.rng.float(0.5, 1.5);
+        p.lifetime = self.rng.float(life.0, life.1);
         if self.rng.int(0, 100) < 0x4B {
             p.flags_b &= 0x7F;
         }

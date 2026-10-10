@@ -6,7 +6,8 @@
 //! Controls: A/D walk, W jump/levitate (the reference binds `key_up` to Up and Fly), S crouch,
 //! mouse aims (facing), Space pause/resume, Period step one frame while paused, R reset,
 //! 1/2/3 pick the left-mouse brush (sand/water/rock_static), right mouse paint rock_static,
-//! middle mouse erase. The debug menu (top left) picks any material for the left brush.
+//! middle mouse erase, E explode at the cursor. The debug menu (top left) picks any material for
+//! the left brush.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -22,6 +23,7 @@ use bevy::ui::RelativeCursorPosition;
 use bevy::window::PrimaryWindow;
 use noita_data::sim_materials::{load_png, to_sim_with_reactions};
 use noita_data::sprites::{self, SpriteDef};
+use sim::particles::{ExplosionConfig, Particles};
 use sim::{AIR, CellType, MaterialId, MaterialProps, Materials, World};
 
 const WIDTH_CHUNKS: u32 = 4;
@@ -35,6 +37,12 @@ const BACKGROUND: [u8; 4] = [20, 20, 28, 255];
 
 #[derive(Resource)]
 struct Sim(World);
+
+/// Flying cells and the explosion dispatcher (`grid::GridParticles`).
+#[derive(Resource)]
+struct Flying(Particles);
+
+const PARTICLE_SEED: u32 = 1;
 
 #[derive(Resource)]
 struct Player(Character);
@@ -204,6 +212,7 @@ fn main() -> ExitCode {
         .insert_resource(SheetSource(Some((sheet_def, sheet))))
         .init_resource::<PlayerInput>()
         .insert_resource(Player(new_player()))
+        .insert_resource(Flying(Particles::new(PARTICLE_SEED)))
         .add_systems(Startup, (setup, spawn_debug_menu))
         .add_systems(FixedUpdate, step_sim)
         .add_systems(
@@ -215,6 +224,7 @@ fn main() -> ExitCode {
                 read_player_input,
                 handle_input,
                 paint,
+                explode_at_cursor,
                 upload_texture,
                 sync_player_sprite,
                 update_title,
@@ -320,6 +330,7 @@ fn setup(
 
 fn step_sim(
     mut sim: ResMut<Sim>,
+    mut flying: ResMut<Flying>,
     mut control: ResMut<Control>,
     input: Res<PlayerInput>,
     mut player: ResMut<Player>,
@@ -327,6 +338,9 @@ fn step_sim(
 ) {
     if !control.paused || std::mem::take(&mut control.step_requested) {
         sim.0.step();
+        let time = sim.0.tick() as f64 * f64::from(DT);
+        flying.0.update(&mut sim.0, DT, time);
+        flying.0.run_explosions(&mut sim.0);
         let sheet = &mut *sheet;
         let character = &mut player.0;
         character.step(&input.0, &sim.0, &Anims(&*sheet));
@@ -443,6 +457,7 @@ fn handle_input(
     palette: Res<Palette>,
     mut control: ResMut<Control>,
     mut sim: ResMut<Sim>,
+    mut flying: ResMut<Flying>,
 ) {
     if keys.just_pressed(KeyCode::Space) {
         control.paused = !control.paused;
@@ -452,6 +467,7 @@ fn handle_input(
     }
     if keys.just_pressed(KeyCode::KeyR) {
         sim.0 = test_scene(&palette);
+        flying.0 = Particles::new(PARTICLE_SEED);
     }
     for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
         .into_iter()
@@ -504,15 +520,64 @@ fn paint(
     }
 }
 
-fn upload_texture(sim: Res<Sim>, canvas: Res<Canvas>, mut images: ResMut<Assets<Image>>) {
-    if !sim.is_changed() {
+fn upload_texture(
+    sim: Res<Sim>,
+    flying: Res<Flying>,
+    canvas: Res<Canvas>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    if !sim.is_changed() && !flying.is_changed() {
         return;
     }
     if let Some(mut image) = images.get_mut(&canvas.0)
         && let Some(data) = image.data.as_mut()
     {
         write_pixels(&sim.0, data);
+        write_particles(&sim.0, &flying.0, data);
     }
+}
+
+/// Particles drawn over the world by their position and color.
+fn write_particles(world: &World, flying: &Particles, rgba: &mut [u8]) {
+    for p in &flying.particles {
+        let (x, y) = (p.pos.0 as i32, p.pos.1 as i32);
+        if !world.in_bounds(x, y) {
+            continue;
+        }
+        let i = ((y * world.width() + x) * 4) as usize;
+        let byte = |v: f32| (v * 255.0) as u8;
+        let alpha = p.color[3];
+        let mix = |s: f32, bg: u8| byte(s * alpha + f32::from(bg) / 255.0 * (1.0 - alpha));
+        rgba[i] = mix(p.color[0], rgba[i]);
+        rgba[i + 1] = mix(p.color[1], rgba[i + 1]);
+        rgba[i + 2] = mix(p.color[2], rgba[i + 2]);
+    }
+}
+
+/// E: a default explosion (`ExplosionConfig` constructor defaults) at the cursor.
+fn explode_at_cursor(
+    keys: Res<ButtonInput<KeyCode>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    camera: Single<(&Camera, &GlobalTransform)>,
+    mut sim: ResMut<Sim>,
+    mut flying: ResMut<Flying>,
+) {
+    if !keys.just_pressed(KeyCode::KeyE) {
+        return;
+    }
+    let (camera, camera_transform) = *camera;
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok(pos) = camera.viewport_to_world_2d(camera_transform, cursor) else {
+        return;
+    };
+    let world = &mut sim.0;
+    let center = (
+        (pos.x + world.width() as f32 / 2.0).floor() + 0.5,
+        (world.height() as f32 / 2.0 - pos.y).floor() + 0.5,
+    );
+    flying.0.explode(world, &ExplosionConfig::default(), center);
 }
 
 fn update_title(

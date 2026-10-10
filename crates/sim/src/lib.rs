@@ -59,6 +59,12 @@ pub struct MaterialProps {
     pub platform_type: i32,
     /// `+0x154`: gas cells are removed once their move count reaches it (0 = never).
     pub lifetime: i32,
+    /// `+0x104`: explosions only affect cells whose durability is at most their limit.
+    pub durability: i32,
+    /// `+0x158`: starting `Cell::hp` (0x7048c0), default 100.
+    pub hp: i32,
+    /// `+0x100`: the nested `<ExplosionConfig>` a burning cell may trigger (burn hook `0x70fb10`).
+    pub explosion: Option<Arc<particles::ExplosionConfig>>,
     /// `+0x194..+0x197`: percent chances per update (gas cells).
     pub gas_speed: u8,
     pub gas_upwards_speed: u8,
@@ -104,6 +110,9 @@ impl MaterialProps {
             slippery: false,
             platform_type: -1,
             lifetime: 0,
+            durability: 0,
+            hp: 100,
+            explosion: None,
             gas_speed: 50,
             gas_upwards_speed: 100,
             gas_horizontal_speed: 100,
@@ -407,6 +416,8 @@ pub struct Cell {
     pub fire_intensity: u8,
     /// Liquid `+0x38` / fire `+0x20`: world frame when created; reactions' `req_lifetime` age.
     pub created: u32,
+    /// Base-cell `+0x4`: what explosion rays and holes wear down (starts at the material's `hp`).
+    pub hp: i32,
 }
 
 impl Cell {
@@ -429,6 +440,7 @@ impl Cell {
             burning: false,
             fire_intensity: 0,
             created: 0,
+            hp: 0,
         }
     }
 }
@@ -518,6 +530,11 @@ pub struct World {
     sweep_pos: usize,
     /// CRT `rand()` used by the shuffle (separate from the game's `0x120741C`; seed unrecovered).
     sweep_rng: MsvcRand,
+    /// Explosions queued since the last flush (`DAT_01207e7c`); a new one is only queued while
+    /// this is zero.
+    explosion_count: u32,
+    /// Flushed explosions waiting for the dispatcher (`Particles::run_explosions`).
+    pending_explosions: Vec<particles::QueuedExplosion>,
 }
 
 /// `GridWorldThreaded` splash aggregate (`+0xE0..+0xEC`), drained by the caller when consumed.
@@ -557,6 +574,8 @@ struct Region {
     /// `+0x4B4`: reaction blobs (world vfn 0x30, `World_QueueBlob` 0x72b250), applied after
     /// this region's cell changes.
     blobs: Vec<Blob>,
+    /// `+0x4FC`: queued explosions (world vfn 0x80, `0x72b3d0`), 0x174-byte records.
+    explosions: Vec<particles::QueuedExplosion>,
     /// `+0xE0..+0xEC`: splash position and sample aggregates.
     splash: SplashStats,
 }
@@ -646,6 +665,7 @@ impl World {
                 movable: Rect::EMPTY,
                 cell_changes: Vec::new(),
                 blobs: Vec::new(),
+                explosions: Vec::new(),
                 splash: SplashStats::default(),
             })
             .collect();
@@ -665,6 +685,8 @@ impl World {
             global_rng,
             current: None,
             spawn_rng: MsvcRand::new(seed),
+            explosion_count: 0,
+            pending_explosions: Vec::new(),
         }
     }
 
@@ -735,6 +757,7 @@ impl World {
         cell.burning = props.on_fire || props.cell_type == CellType::Fire;
         cell.fire_intensity = props.temperature_of_fire as u8;
         cell.created = self.frame;
+        cell.hp = props.hp;
         if !self.in_bounds(x, y) {
             return Err(OutOfBounds { x, y });
         }
@@ -887,7 +910,26 @@ impl World {
             for blob in std::mem::take(&mut self.regions[r].blobs) {
                 self.apply_blob(blob);
             }
+            let queued = std::mem::take(&mut self.regions[r].explosions);
+            self.pending_explosions.extend(queued);
         }
+        // 0x72abf0 resets the queued-explosion counter once its explosions are handed over.
+        self.explosion_count = 0;
+    }
+
+    /// Takes the explosions flushed since the last call; run them with
+    /// [`particles::Particles::run_explosions`].
+    pub fn take_explosions(&mut self) -> Vec<particles::QueuedExplosion> {
+        std::mem::take(&mut self.pending_explosions)
+    }
+
+    /// World vfn 0x80 (`0x72b3d0`): queue an explosion record on the updating region.
+    fn queue_explosion(&mut self, config: particles::ExplosionConfig, pos: (f32, f32)) {
+        let region = self.current.expect("inside a region update");
+        self.regions[region]
+            .explosions
+            .push(particles::QueuedExplosion { config, pos });
+        self.explosion_count += 1;
     }
 
     /// `GridWorld::SetCell` (0x71b140): an occupied cell is kept unless `replace`, else removed;
@@ -1680,8 +1722,7 @@ impl World {
         }
     }
 
-    /// 0x70ebf0. Unported: `convert_all` (world vfn 0x34), entity spawns, audio and attached
-    /// explosions (which also draw from the RNG).
+    /// 0x70ebf0. Unported: `convert_all` (world vfn 0x34), entity spawns and audio.
     fn apply_reaction(&mut self, reaction: &Reaction, (x, y): (i32, i32), (nx, ny): (i32, i32)) {
         if reaction.req_lifetime > 0 && self.cell_age(x, y) < reaction.req_lifetime {
             return;
@@ -1741,6 +1782,18 @@ impl World {
                 && !self.occupied(x + 1, y);
             let output1 = if lonely { AIR } else { reaction.output1 };
             self.change_material(x, y, output1);
+        }
+        if let Some(config) = &reaction.explosion
+            && self.explosion_count < 1
+        {
+            let roll = self.rng().rand() as f32 / 32767.0 + 0.0;
+            if roll < config.cell_explosion_probability {
+                let (min, max) = config.cell_explosion_radius;
+                let mut config = (**config).clone();
+                config.never_cache = false;
+                config.radius = (self.rng().rand() as f32 / 32767.0) * (max - min) + min;
+                self.queue_explosion(config, (x as f32, y as f32));
+            }
         }
     }
 
@@ -1925,6 +1978,10 @@ impl World {
             self.materials.find(&props.on_fire_flame_material),
             self.materials.find(&props.on_fire_smoke_material),
         );
+        let explosion = props
+            .explosion
+            .clone()
+            .filter(|_| props.cell_type != CellType::Solid);
 
         let mut emitted = false;
         if flames > 0 && self.rng().rand() % 101 < flames {
@@ -1946,6 +2003,21 @@ impl World {
         if smoke > 0 && self.rng().rand() % 101 < smoke {
             self.rng().rand();
             self.emit_above(x, y, smoke_material);
+        }
+        if self.explosion_count < 1
+            && let Some(config) = explosion
+        {
+            let required = config.cell_explosion_damage_required;
+            let top = (required + 0.5).min(100.0);
+            let roll = self.rng().rand() as f32 / 32767.0 * (top - 0.0) + 0.0;
+            if required <= roll {
+                let jitter = self.rng().rand() as f32 / 32767.0 * 0.5 + 0.75;
+                let mut config = (*config).clone();
+                config.never_cache = false;
+                config.radius = (config.cell_explosion_power * jitter).sqrt().min(150.0);
+                self.queue_explosion(config, (x as f32, y as f32));
+                return;
+            }
         }
         if self.cell(x, y).expect("in bounds").burning {
             self.spread_fire(x, y);

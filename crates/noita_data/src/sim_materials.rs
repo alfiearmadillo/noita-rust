@@ -149,6 +149,13 @@ fn props_of(d: &MaterialDef) -> MaterialProps {
         slippery: d.attr_flag("slippery").unwrap_or(base.slippery),
         platform_type: int("platform_type").unwrap_or(base.platform_type),
         lifetime: int("lifetime").unwrap_or(base.lifetime),
+        durability: int("durability").unwrap_or(base.durability),
+        hp: int("hp").unwrap_or(base.hp),
+        explosion: d.explosion_config.as_ref().map(|attrs| {
+            let mut config = sim::particles::ExplosionConfig::default();
+            config.apply(attrs);
+            std::sync::Arc::new(config)
+        }),
         // Byte fields (`+0x194..+0x197`).
         gas_speed: int("gas_speed").map_or(base.gas_speed, |v| v as u8),
         gas_upwards_speed: int("gas_upwards_speed").map_or(base.gas_upwards_speed, |v| v as u8),

@@ -15,6 +15,8 @@ pub struct MaterialDef {
     pub graphics_color: Option<u32>,
     /// `<Graphics texture_file=...>`, inherited from the parent when absent.
     pub texture_file: Option<String>,
+    /// Attributes of a nested `<ExplosionConfig>`, inherited from the parent when absent.
+    pub explosion_config: Option<BTreeMap<String, String>>,
 }
 
 impl MaterialDef {
@@ -111,6 +113,14 @@ pub fn parse(xml: &str) -> Result<Vec<MaterialDef>, MaterialsError> {
                 texture_file: graphics
                     .and_then(|g| g.attribute("texture_file"))
                     .map(str::to_owned),
+                explosion_config: node
+                    .children()
+                    .find(|c| c.has_tag_name("ExplosionConfig"))
+                    .map(|c| {
+                        c.attributes()
+                            .map(|a| (a.name().to_owned(), a.value().to_owned()))
+                            .collect()
+                    }),
             },
         });
     }
@@ -204,6 +214,9 @@ fn resolve(
     }
     if own.texture_file.is_some() {
         def.texture_file.clone_from(&own.texture_file);
+    }
+    if own.explosion_config.is_some() {
+        def.explosion_config.clone_from(&own.explosion_config);
     }
     resolved[i] = Some(def);
     Ok(())

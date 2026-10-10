@@ -55,7 +55,7 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 5. [~] Reactions (alchemy): the reference tables (normal and fast, tag expansion, per-material maximum probability),
     lookup, dispatcher, burning-cell path, record application (outputs, third input, direction, `req_lifetime`,
     lonely pixels), blobs and the liquid, gas and fire call sites are ported (see "Reactions" in `README.md`). Missing:
-    blob particles, `convert_all`, entity spawns, audio, explosions, and an exact check of tag-expansion nesting for
+    blob particles, `convert_all`, entity spawns, audio, and an exact check of tag-expansion nesting for
     records with several tags. Required reactions are ported; the spontaneous freezing/melting rolls are dead code
     (their worker bytes are never written).
 6. [ ] Other cell behaviors: lifetime, electricity/conductivity, freezing/melting, burning states, particle
@@ -64,7 +64,7 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
    what explosions, joint breaks and blob effects emit. Ported in `sim::particles`: record defaults, the integrator
    (`0x713e20`, simplex swirl in `sim::noise`), the collision stepper (`0x712390`), `AddAsParticle` and the material
    creator, the dead-particle pass (`0x716600`) and the landing queue (`0x71a590`, `0x71fde0`, `0x71fba0`). Still
-   missing: the explosion and joint-break callers, force rectangles, the render lists and the `liquid_stains == 2`
+   missing: the joint-break caller, force rectangles, the render lists and the `liquid_stains == 2`
    hook; the engine's camera-local material grid is read from the live world instead. Layout notes are in the repo
    memory (`particles.md`).
 7. [~] Scheduler: 64x64 worker regions with per-region dirty rects, RNGs and full counters, rect sharing across
@@ -92,11 +92,12 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 14. [ ] Damage model: HP, damage types and multipliers, fall damage, fire, drowning, material damage, i-frames,
     blood/gore, ragdolls.
 15. [ ] Projectiles: motion, cell/entity collision, lifetime, bounces, triggers.
-16. [ ] Explosions: terrain carving by durability, physics impulses, damage falloff, light/shake. Recovered so
-    far: 15 reference materials carry a CellData `<ExplosionConfig>` (`+0x100`) rolled from the burn hook (`0x70fb10`)
-    and 3 reactions carry one; records (config `0x168` bytes plus position) queue on the worker (`0x72b3d0`), flush
-    through `GridWorld` vt[32] (`0x721350`) and `0x657410` into the 18 KB `0x657960` (decompiles with
-    `/force_decompile`; it casts 360 rays, then damages entities and bodies and emits particle cells).
+16. [~] Explosions: terrain carving by durability, physics impulses, damage falloff, light/shake. Cell effects of
+    `0x657960` are ported (`sim::particles::Particles::explode`: 360 rays, hp/durability wear, stains, debris and
+    sparks) with the burn-hook and reaction triggers and the per-frame dispatcher; see README "Explosions". 15
+    reference materials carry a CellData `<ExplosionConfig>` (`+0x100`) and 3 reactions carry one. Missing: entity
+    damage, knockback, physics bodies, cracks, light, shake, audio, pixel sprites, the gore branch
+    (`CellData+0x1C4`) and the delay ids.
 17. [ ] Wands: `AbilityComponent` gun stats, cast delay, recharge, mana, spread, shuffle, spells per cast.
 18. [ ] Spells: run the reference `gun.lua` / `gun_actions.lua` / extra modifiers in the Lua runtime; all ~400 spells
     with modifiers, triggers, multicasts, wrapping and draw/shuffle bugs.

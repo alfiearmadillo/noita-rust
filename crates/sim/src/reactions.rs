@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crate::particles::ExplosionConfig;
 use crate::{CellType, MaterialId, MaterialProps, ReactionProps};
 
 /// `+0x38`: `direction` of a record; the neighbor must lie on this side of the reacting cell.
@@ -42,8 +43,8 @@ pub struct Reaction {
     /// `+0x31`
     pub convert_all: bool,
     pub direction: Option<Direction>,
-    /// `+0x3C`: an `ExplosionConfig` is attached (unported).
-    pub has_explosion: bool,
+    /// `+0x3C`: the attached `ExplosionConfig`; `cell_explosion_probability` gates it.
+    pub explosion: Option<std::sync::Arc<ExplosionConfig>>,
 }
 
 /// The normal (`+0x2C`) and fast (`+0x58`) tables, keyed by (input1, input2), and the largest
@@ -237,7 +238,11 @@ fn make_reaction(
             Some("right") => Some(Direction::Right),
             _ => None,
         },
-        has_explosion: record.explosion_config.is_some(),
+        explosion: record.explosion_config.as_ref().map(|attrs| {
+            let mut config = ExplosionConfig::default();
+            config.apply(attrs);
+            std::sync::Arc::new(config)
+        }),
     }
 }
 
