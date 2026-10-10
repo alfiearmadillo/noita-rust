@@ -37,6 +37,7 @@ crates/noita_data/           readers for reference data: data.wak, materials.xml
 crates/re_tools/             read-only analysis of noita_files/install/noita.exe (vtable, disasm, calls, xref, grep)
 crates/probe/                noita_probe: read-only reader for the running game's cell grid (see "Runtime probe")
 crates/worldgen/             world generation: herringbone Wang tile maps (more stages to come)
+crates/script/               LuaJIT runtime (mlua, vendored) for the reference scripts; wand engine running gun.lua
 scripts/ghidra-server.ps1    starts the headless Ghidra server used for decompilation (see PLAN.md)
 docs/                        behavior notebook template
 noita_files/                 local copies of Noita game files (git-ignored; never commit)
@@ -642,6 +643,30 @@ limit is 100x100 tiles (`"increase STB_HBWANG_MAX_X/Y"`, string `0xfea8c0`).
   pixel.
 - Not ported: the biome driver chain (seeds, retries, validity check), the color to material / spawn mapping (`0x87a900`),
   the biome map, pixel scenes, background layers.
+
+### Recovered rules: Lua runtime and wand engine (ported in `crates/script`)
+
+The exe embeds LuaJIT (`lua51.dll`; scripts use `bit.band`). Scripts load through a virtual file system rooted at the
+data folder; `dofile_once` is Lua code inside the exe (string `0x1028ac8`, copied verbatim, plus a `do_mod_appends` hook
+that is a no-op without mods). Script API functions are native handlers registered one by one (registration table at
+`0x7ea410` for the random functions, `0xb294a0` for the gun functions).
+
+- **Wand engine**: the reference `data/scripts/gun/gun.lua` runs unchanged; the C++ half is only a command recorder.
+  `BeginProjectile` / `EndProjectile` / `BeginTriggerTimer|HitWorld|Death` / `EndTrigger` / `SetProjectileConfigs` append
+  records (0x25c bytes at `0x12093f8`) in call order (`0xb28160`, `0xb282f0`, `0xb283e0`, `0xb28510`, `0xb28600`,
+  `0xb286f0`, `0xb287e0`); `RegisterGunAction` (`0xb27ff0`, 65 positional fields in `gunaction_generated.lua` order)
+  stores the modifiers of the shot just drawn; `StartReload` (`0xb28900`) stores the reload time; `ActionUsed`
+  (`0xb289f0`), `OnActionPlayed` (`0xb28b10`, progress flags `action_<id>`), `LogAction`, `BaabInstruction`,
+  `OnNotEnoughManaForAction` are bookkeeping. `ActionUsesRemainingChanged` (`0xb28930`) returns true unless the game
+  state check `0xc4a870` fails. The defaults of `ConfigGun` / `ConfigGunActionInfo` live in the generated Lua files.
+- The C++ side drives `gun.lua` through `_set_gun` / `_set_gun2` (values in `__globaldata`), `_clear_deck`,
+  `_add_card_to_deck(id, inventoryitem_id, uses_remaining, is_identified)`, `_play_permanent_card`, `_start_shot(mana)`,
+  `_draw_actions_for_shot(can_reload)` and `_handle_reload()` (returns the mana left). `script::gun::Gun` wraps these and
+  returns the recorded `GunCommand` list; tests cover single spells, modifiers, draw-many, triggers, mana, reload time and
+  the frame-seeded shuffle against the real `gun_actions.lua`.
+- Not ported: turning the commands into projectile entities (needs the entity/component layer), the progress flags,
+  per-item use bookkeeping, and every other script API function (`EntityGetFirstComponent`, `GameGetFrameNum` is a
+  settable counter, ...). Spell actions that call those will fail until the functions exist.
 
 ### Not yet ported from these functions
 

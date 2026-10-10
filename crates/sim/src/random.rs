@@ -20,8 +20,9 @@ const MODULUS: i32 = 0x7FFF_FFFF;
 #[allow(clippy::approx_constant)]
 const SAMPLER_PI: f32 = 3.1415;
 
-/// `cvttsd2si`: truncates toward zero; anything unrepresentable becomes `i32::MIN`.
-fn cvtt32(v: f64) -> i32 {
+/// `cvttsd2si`: truncates toward zero; anything unrepresentable becomes `i32::MIN`. This is also
+/// what the 32-bit `lua_tointeger` does to a number.
+pub fn cvtt32(v: f64) -> i32 {
     if v.is_nan() || v >= 2_147_483_648.0 || v <= -2_147_483_649.0 {
         i32::MIN
     } else {

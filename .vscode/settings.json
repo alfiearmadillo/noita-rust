@@ -5,6 +5,9 @@
         "/^& \"\\$env:USERPROFILE\\\\\\.cargo\\\\bin\\\\cargo\\.exe\" test --offline -p sim -p noita_data$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "git add": true,
+        "git commit": true,
+        "git push": true
     }
 }

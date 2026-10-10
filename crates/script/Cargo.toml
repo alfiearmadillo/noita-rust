@@ -1,0 +1,14 @@
+[package]
+name = "script"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Lua runtime for the reference game scripts (LuaJIT, Noita's script API)."
+
+[dependencies]
+mlua = { version = "0.12.2", features = ["luajit", "vendored"] }
+sim = { path = "../sim" }
+
+[lints]
+workspace = true

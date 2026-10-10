@@ -78,7 +78,9 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
 8. [ ] Entity/component system: entity XML loading, `<Base>` inheritance, tags, children, transforms, recovered
    system update order.
 9. [ ] Component set: fields and defaults from `component_documentation.txt`, ported system by system as needed.
-10. [ ] Lua runtime (LuaJIT / Lua 5.1) and the API from `lua_api_documentation.txt`; all script hooks.
+10. [~] Lua runtime (LuaJIT / Lua 5.1) and the API from `lua_api_documentation.txt`; all script hooks.
+    Done: LuaJIT via `mlua` (`crates/script`), `dofile` / `dofile_once` / `loadfile` with a rooted virtual file system,
+    `print`, the random API, the gun API. Missing: the other ~300 API functions (they need the entity layer).
 11. [~] RNG: world seed, `SetRandomSeed(x, y)` and every RNG path (needed for identical wands, spells, biomes,
     secrets). Done: the `Random` class, `SetRandomSeed`, `Random*`, `ProceduralRandom*`, `RandomDistribution*`
     (`sim::random`, unverified against a live game). Missing: world-seed generation, wiring into the Lua runtime and
@@ -101,8 +103,10 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
     damage, knockback, physics bodies, cracks, light, shake, audio, pixel sprites, the gore branch
     (`CellData+0x1C4`) and the delay ids.
 17. [ ] Wands: `AbilityComponent` gun stats, cast delay, recharge, mana, spread, shuffle, spells per cast.
-18. [ ] Spells: run the reference `gun.lua` / `gun_actions.lua` / extra modifiers in the Lua runtime; all ~400 spells
-    with modifiers, triggers, multicasts, wrapping and draw/shuffle bugs.
+18. [~] Spells: run the reference `gun.lua` / `gun_actions.lua` / extra modifiers in the Lua runtime; all ~400 spells
+    with modifiers, triggers, multicasts, wrapping and draw/shuffle bugs. Done: `gun.lua` runs unchanged and the
+    engine-side command recorder reproduces projectile/trigger/shot structure, mana, reload and the shuffle
+    (`script::gun`). Missing: spawning the projectiles, spell actions that call other script API functions, extra modifiers.
 19. [ ] Items and inventory: wands, flasks (material inventory, spray, throw), pickups, quick/full inventory, wand
     editing.
 20. [ ] Enemy AI: AI components, pathfinding grid, herd relations; enemies from `data/entities/animals`.
