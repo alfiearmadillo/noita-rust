@@ -11,6 +11,7 @@ actors = { path = "../actors" }
 bevy = "0.19.1"
 noita_data = { path = "../noita_data" }
 sim = { path = "../sim" }
+worldgen = { path = "../worldgen" }
 
 [lints]
 workspace = true

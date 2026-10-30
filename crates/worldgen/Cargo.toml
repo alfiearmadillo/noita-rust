@@ -8,10 +8,10 @@ description = "World generation: herringbone Wang tile maps as the reference bui
 
 [dependencies]
 entity = { path = "../entity" }
+noita_data = { path = "../noita_data" }
 sim = { path = "../sim" }
 
 [dev-dependencies]
-noita_data = { path = "../noita_data" }
 png = "0.18.1"
 
 [lints]

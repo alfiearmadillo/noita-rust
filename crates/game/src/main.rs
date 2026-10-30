@@ -21,6 +21,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::RelativeCursorPosition;
 use bevy::window::PrimaryWindow;
+use noita_data::materials::MaterialDef;
 use noita_data::sim_materials::{load_png, to_sim_with_reactions};
 use noita_data::sprites::{self, SpriteDef};
 use sim::particles::{ExplosionConfig, Particles};
@@ -78,13 +79,19 @@ struct PlayerSprite;
 
 const PLAYER_SPAWN: (f32, f32) = (60.0, 20.0);
 
-fn new_player() -> Character {
-    Character::new(PLAYER_SPAWN, Platforming::player(), Body::player())
+/// Where `R` puts the player back.
+#[derive(Resource)]
+struct Spawn((f32, f32));
+
+fn new_player(spawn: (f32, f32)) -> Character {
+    Character::new(spawn, Platforming::player(), Body::player())
 }
 
 #[derive(Resource)]
 struct Palette {
     table: Materials,
+    /// The parsed `materials.xml`; `defs[i]` is material `MaterialId(i)`.
+    defs: Vec<MaterialDef>,
     /// Left-mouse brush presets for keys 1..: sand, water, rock_static.
     brushes: [MaterialId; 3],
     /// English `ui_name` per material index; empty when untranslated.
@@ -163,6 +170,7 @@ fn load_palette() -> Result<Palette, String> {
         .collect();
     Ok(Palette {
         table,
+        defs,
         brushes,
         ui_names,
     })
@@ -187,6 +195,7 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+    let spawn = scene_spawn(&palette);
     App::new()
         .add_plugins((
             DefaultPlugins
@@ -211,7 +220,8 @@ fn main() -> ExitCode {
         .insert_resource(palette)
         .insert_resource(SheetSource(Some((sheet_def, sheet))))
         .init_resource::<PlayerInput>()
-        .insert_resource(Player(new_player()))
+        .insert_resource(Player(new_player(spawn)))
+        .insert_resource(Spawn(spawn))
         .insert_resource(Flying(Particles::new(PARTICLE_SEED)))
         .add_systems(Startup, (setup, spawn_debug_menu))
         .add_systems(FixedUpdate, step_sim)
@@ -233,6 +243,70 @@ fn main() -> ExitCode {
         )
         .run();
     ExitCode::SUCCESS
+}
+
+/// The world to play in: the test scene, or a generated biome when `NOITA_BIOME` names one
+/// (`NOITA_SEED` picks the seed; default 12345). See `worldgen::generate`: only the Wang
+/// terrain is generated, not structures, spawn functions or pixel scenes.
+fn build_world(p: &Palette) -> World {
+    let Some(biome) = std::env::var_os("NOITA_BIOME") else {
+        return test_scene(p);
+    };
+    let biome = biome.to_string_lossy().into_owned();
+    let seed: f64 = std::env::var("NOITA_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(12345.0);
+    let mut world = World::new(WIDTH_CHUNKS, HEIGHT_CHUNKS, CHUNK_SIZE, p.table.clone(), 1);
+    let (w, h) = (world.width() as usize, world.height() as usize);
+    // A window well inside the 3x3 chunk Wang map.
+    let origin = (400, 300);
+    match worldgen::generate::generate_biome(
+        &noita_files(),
+        &p.defs,
+        &biome,
+        seed,
+        origin,
+        (w, h),
+        (3, 3),
+    ) {
+        Ok(area) => {
+            for (i, &m) in area.materials.iter().enumerate() {
+                let (x, y) = ((i % w) as i32, (i / w) as i32);
+                world.set(x, y, MaterialId(m)).expect("in bounds");
+            }
+            world
+        }
+        Err(e) => {
+            eprintln!("NOITA_BIOME={biome}: {e}; using the test scene");
+            test_scene(p)
+        }
+    }
+}
+
+/// Where the player starts: the first standing spot (air above solid ground) of a generated
+/// world, else the test scene's spawn.
+fn scene_spawn(p: &Palette) -> (f32, f32) {
+    if std::env::var_os("NOITA_BIOME").is_none() {
+        return PLAYER_SPAWN;
+    }
+    let world = build_world(p);
+    let solid = |x, y| {
+        world
+            .get(x, y)
+            .and_then(|m| p.table.get(m))
+            .is_some_and(|m| m.cell_type == CellType::Solid)
+    };
+    for y in 20..world.height() - 2 {
+        for x in 12..world.width() - 12 {
+            let roomy =
+                (y - 14..=y).all(|yy| (x - 3..=x + 3).all(|xx| world.get(xx, yy) == Some(AIR)));
+            if roomy && solid(x, y + 1) {
+                return (x as f32, y as f32 - 6.0);
+            }
+        }
+    }
+    PLAYER_SPAWN
 }
 
 fn test_scene(p: &Palette) -> World {
@@ -274,7 +348,7 @@ fn setup(
     palette: Res<Palette>,
     mut source: ResMut<SheetSource>,
 ) {
-    let world = test_scene(&palette);
+    let world = build_world(&palette);
     let (w, h) = (world.width() as u32, world.height() as u32);
     let mut image = Image::new_fill(
         Extent3d {
@@ -375,6 +449,7 @@ fn read_player_input(
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
     sim: Res<Sim>,
+    spawn: Res<Spawn>,
     mut input: ResMut<PlayerInput>,
     mut player: ResMut<Player>,
 ) {
@@ -394,7 +469,7 @@ fn read_player_input(
         mouse,
     };
     if keys.just_pressed(KeyCode::KeyR) {
-        player.0 = new_player();
+        player.0 = new_player(spawn.0);
     }
 }
 
@@ -466,7 +541,7 @@ fn handle_input(
         control.step_requested = true;
     }
     if keys.just_pressed(KeyCode::KeyR) {
-        sim.0 = test_scene(&palette);
+        sim.0 = build_world(&palette);
         flying.0 = Particles::new(PARTICLE_SEED);
     }
     for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]

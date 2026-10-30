@@ -2673,6 +2673,7 @@ dependencies = [
  "bevy",
  "noita_data",
  "sim",
+ "worldgen",
 ]
 
 [[package]]

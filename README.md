@@ -36,7 +36,7 @@ crates/box2d/                Rust port of Box2D 2.3.1 (the engine Noita ships); 
 crates/noita_data/           readers for reference data: data.wak, materials.xml, sprite XML, sim table conversion
 crates/re_tools/             read-only analysis of noita_files/install/noita.exe (vtable, disasm, calls, xref, grep)
 crates/probe/                noita_probe: read-only reader for the running game's cell grid (see "Runtime probe")
-crates/worldgen/             world generation: herringbone Wang tile maps (more stages to come)
+crates/worldgen/             world generation: Wang tile maps, biome terrain lookup, material rules, biome XML
 crates/script/               LuaJIT runtime (mlua, vendored) for the reference scripts; wand engine running gun.lua
 crates/entity/               entity XML templates: lenient XML reader, <Base> inheritance (components as attribute trees)
 scripts/ghidra-server.ps1    starts the headless Ghidra server used for decompilation (see PLAN.md)
@@ -60,6 +60,9 @@ cargo run -p sim --example falling_sand                 # print grid each tick u
 cargo run -p sim --example tick_timing                  # debug tick timing
 cargo run -p sim --example tick_timing --release        # release tick timing
 cargo run -p game                                       # Bevy sandbox window (needs extracted noita_files)
+$env:NOITA_BIOME="coalmine"; cargo run -p game          # same, with a generated Coal Mines slice (NOITA_SEED=..)
+cargo run -p worldgen --release --example render_biome -- coalmine 12345 3 2 out.png   # biome terrain PNG
+python scripts/emulate_golden.py wang|warp|rules|terrain|material_at|simplex2d   # regenerate emulator golden data
 cargo test -p sim                                       # sim only (fast; no Bevy build)
 cargo run -p re_tools --release -- vtable noita_files\install\noita.exe ".?AVCLiquidCell@grid@@"
 scripts\ghidra-server.ps1                               # start headless Ghidra (decompiler) on 127.0.0.1:8089

@@ -2,6 +2,7 @@
 //! [`wang`]) and then maps its colors to materials, spawn functions and pixel scenes.
 
 pub mod biome;
+pub mod generate;
 pub mod rules;
 pub mod terrain;
 pub mod wang;
