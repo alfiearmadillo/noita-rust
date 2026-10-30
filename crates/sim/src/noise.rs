@@ -118,6 +118,135 @@ pub fn simplex3(xin: f64, yin: f64, zin: f64) -> f64 {
     (n1 + n0 + n2 + n3) * 32.0
 }
 
+/// `0xFDFFE0`: the second permutation, used by the 2D value and gradient noise.
+const P2: [u8; 256] = [
+    23, 125, 161, 52, 103, 117, 70, 37, 247, 101, 203, 169, 124, 126, 44, 123, 152, 238, 145, 45,
+    171, 114, 253, 10, 192, 136, 4, 157, 249, 30, 35, 72, 175, 63, 77, 90, 181, 16, 96, 111, 133,
+    104, 75, 162, 93, 56, 66, 240, 8, 50, 84, 229, 49, 210, 173, 239, 141, 1, 87, 18, 2, 198, 143,
+    57, 225, 160, 58, 217, 168, 206, 245, 204, 199, 6, 73, 60, 20, 230, 211, 233, 94, 200, 88, 9,
+    74, 155, 33, 15, 219, 130, 226, 202, 83, 236, 42, 172, 165, 218, 55, 222, 46, 107, 98, 154,
+    109, 67, 196, 178, 127, 158, 13, 243, 65, 79, 166, 248, 25, 224, 115, 80, 68, 51, 184, 128,
+    232, 208, 151, 122, 26, 212, 105, 43, 179, 213, 235, 148, 146, 89, 14, 195, 28, 78, 112, 76,
+    250, 47, 24, 251, 140, 108, 186, 190, 228, 170, 183, 139, 39, 188, 244, 246, 132, 48, 119, 144,
+    180, 138, 134, 193, 82, 182, 120, 121, 86, 220, 209, 3, 91, 241, 149, 85, 205, 150, 113, 216,
+    31, 100, 41, 164, 177, 214, 153, 231, 38, 71, 185, 174, 97, 201, 29, 95, 7, 92, 54, 254, 191,
+    118, 34, 221, 131, 11, 163, 99, 234, 81, 227, 147, 156, 176, 17, 142, 69, 12, 110, 62, 27, 255,
+    0, 194, 59, 116, 242, 252, 19, 21, 187, 53, 207, 129, 64, 135, 61, 40, 167, 237, 102, 223, 106,
+    159, 197, 189, 215, 137, 36, 32, 22, 5,
+];
+
+/// `0x11D2960`: the eight 2D gradients of `perlin2`.
+const GRAD2: [[f32; 2]; 8] = [
+    [-1.0, 0.0],
+    [1.0, 0.0],
+    [0.0, -1.0],
+    [0.0, 1.0],
+    [-1.0, -1.0],
+    [-1.0, 1.0],
+    [1.0, -1.0],
+    [1.0, 1.0],
+];
+
+/// Truncate, then step down when that rounded up.
+fn floor_i(v: f32) -> i32 {
+    let t = v as i32;
+    if t as f32 > v { t - 1 } else { t }
+}
+
+/// The quintic fade `((6t - 15) t + 10) t^3`.
+fn fade(t: f32) -> f32 {
+    let mut f = t * 6.0 - 15.0;
+    f = f * t + 10.0;
+    f * t * t * t
+}
+
+fn perm2(i: usize) -> usize {
+    usize::from(P2[i & 255])
+}
+
+/// 2D value noise (`0x872BE0`) in [-1, 1].
+pub fn value2(x: f32, y: f32) -> f32 {
+    let (xi, yi) = (floor_i(x), floor_i(y));
+    let (fx, fy) = (x - xi as f32, y - yi as f32);
+    let (y0, y1) = (yi as usize & 255, (yi + 1) as usize & 255);
+    let (a, b) = (perm2(xi as usize & 255), perm2((xi + 1) as usize & 255));
+    let wy = fade(fy);
+    let side = |base: usize| {
+        let v0 = perm2(base + y0) as f32 / 255.0;
+        let v1 = perm2(base + y1) as f32 / 255.0;
+        (v1 - v0) * wy + v0
+    };
+    let (l0, l1) = (side(a), side(b));
+    ((l1 - l0) * fade(fx) + l0 - 0.5) * 2.0
+}
+
+/// 2D gradient noise (`0x872A20`) in about [-1, 1].
+pub fn perlin2(x: f32, y: f32) -> f32 {
+    let (xi, yi) = (floor_i(x), floor_i(y));
+    let (fx, fy) = (x - xi as f32, y - yi as f32);
+    let (y0, y1) = (yi as usize & 255, (yi + 1) as usize & 255);
+    let (a, b) = (perm2(xi as usize & 255), perm2((xi + 1) as usize & 255));
+    let grad = |h: usize| GRAD2[perm2(h) & 7];
+    let (g00, g01) = (grad(a + y0), grad(a + y1));
+    let (g10, g11) = (grad(b + y0), grad(b + y1));
+    let (fx1, fy1) = (fx - 1.0, fy - 1.0);
+    let d00 = g00[1] * fy + fx * g00[0];
+    let d10 = g10[1] * fy + g10[0] * fx1;
+    let d01 = g01[1] * fy1 + fx * g01[0];
+    let d11 = g11[1] * fy1 + g11[0] * fx1;
+    let wy = fade(fy);
+    let low = (d01 - d00) * wy + d00;
+    let high = (d11 - d10) * wy + d10;
+    (high - low) * fade(fx) + low
+}
+
+/// Gustavson's gradient for a 2D simplex corner.
+fn simplex_grad2(hash: usize, x: f32, y: f32) -> f32 {
+    let h = hash & 7;
+    let (u, v) = if h < 4 { (x, y) } else { (y, x) };
+    let u = if h & 1 != 0 { -u } else { u };
+    let v = if h & 2 != 0 { v * -2.0 } else { v * 2.0 };
+    v + u
+}
+
+/// 2D simplex noise (`0x872D40`) in single precision; its floor is `v > 0 ? trunc : trunc - 1`.
+pub fn simplex2(x: f32, y: f32) -> f32 {
+    const F2: f32 = 0.366_025_4;
+    const G2: f32 = 0.211_324_87;
+    let fast = |v: f32| if v > 0.0 { v as i32 } else { v as i32 - 1 };
+    let s = (x + y) * F2;
+    let (i, j) = (fast(s + x), fast(s + y));
+    let t = (i + j) as f32 * G2;
+    let (x0, y0) = (x - (i as f32 - t), y - (j as f32 - t));
+    let (i1, j1) = if x0 > y0 { (1, 0) } else { (0, 1) };
+    let (x1, y1) = (x0 - i1 as f32 + G2, y0 - j1 as f32 + G2);
+    let (x2, y2) = (x0 - 1.0 + 0.422_649_74, y0 - 1.0 + 0.422_649_74);
+    let (ii, jj) = (i as usize & 255, j as usize & 255);
+    let permb = |k: usize| usize::from(P[k & 255]);
+    let corner = |t: f32, hash: usize, dx: f32, dy: f32| {
+        if t >= 0.0 {
+            let t = t * t;
+            simplex_grad2(hash, dx, dy) * (t * t)
+        } else {
+            0.0
+        }
+    };
+    let n0 = corner(0.5 - x0 * x0 - y0 * y0, permb(permb(jj) + ii), x0, y0);
+    let n1 = corner(
+        0.5 - x1 * x1 - y1 * y1,
+        permb(permb(jj + j1) + ii + i1),
+        x1,
+        y1,
+    );
+    let n2 = corner(
+        0.5 - x2 * x2 - y2 * y2,
+        permb(permb(jj + 1) + ii + 1),
+        x2,
+        y2,
+    );
+    (n1 + n0 + n2) * 40.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

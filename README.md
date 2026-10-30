@@ -525,7 +525,13 @@ serializers `0x9ec700`, `0x69dc00`; privates follow the documented order):
   `0x20`); a rising particle that is not from a cell and falls becomes normal; mode 2 teleports; otherwise the collision
   stepper runs and the trailing position is `new + normalize(old - new) * speed * dt`.
 - **Simplex noise** (`0x872560`): Gustavson 3D with the Perlin permutation at `0xFDF530`, 12 edge gradients,
-  `0.6 - |d|^2` falloff and a `32.0` scale (the 0.6 radius leaves tiny seams of about 3e-4).
+  `0.6 - |d|^2` falloff and a `32.0` scale (the 0.6 radius leaves tiny seams of about 3e-4). Checked bit for bit against
+  404 emulated vectors (`crates/sim/tests/noise_golden.rs`).
+- **2D noise** (single precision, `sim::noise`): `simplex2` `0x872d40` (Gustavson 2D with `F2 = 0.3660254`, `G2 = 0.21132487`,
+  its own floor `v > 0 ? trunc : trunc - 1`, `0.5 - |d|^2` falloff, scale 40, permutation `0xFDF730` = the classic one),
+  `perlin2` `0x872a20` and `value2` `0x872be0` (a second permutation at `0xFDFFE0`, eight unit gradients at `0x11D2960`,
+  quintic fade; value noise returns `(lerp - 0.5) * 2`). All three match 918 emulated vectors
+  (`crates/sim/tests/noise2d_golden.rs`).
 - **Collision stepper** (`0x712390`): dies outside the update window; without the collide flag it just moves; else it
   walks up to 60 unit steps from the last visited cell, looking at the material in each new cell. Empty cells and gas
   or fire pass (a rising particle stops being rising). Liquid or solid cells: a rising particle passes only while it is
@@ -646,6 +652,12 @@ limit is 100x100 tiles (`"increase STB_HBWANG_MAX_X/Y"`, string `0xfea8c0`).
   100 times with a new seed drawn from its own Park-Miller chain (biome seed `+0x4C`) until the validity check `0x8771a0`
   accepts it; then every non-black pixel looks up its color in a spawn-function table (`FUN_00876aa0`) with a draw per
   pixel.
+- **World to Wang coordinates** (`0x87ce50`, `worldgen::warp`): one Wang pixel is 10x10 world pixels. With `X = offset_x +
+  x`, `Y = offset_y + y` (globals `0x1206fb0` random in +-100000, `0x12051b0` = 7168), `u = (X + 0.5) * 0.1`, `v = (Y + 0.5) *
+  0.1` (single precision). With a positive strength the lookup is displaced: `k = simplex2(X * 0.13715, Y * 0.13717) * 0.45 +
+  0.1`, `u' = floor(u) + frac(u) + value2(X/9, Y/9) * k * s`, `v' = floor(v) + frac(v) + perlin2(Y/9, X/9) * ((1 - k) *
+  0.33 + 0.111) * s`. Matches 500 emulated vectors (the `floor` DLL import is replaced by an integer stub written into the
+  emulator's memory and the IAT slot).
 - Not ported: the biome driver chain (seeds, retries, validity check), the color to material / spawn mapping (`0x87a900`),
   the biome map, pixel scenes, background layers.
 

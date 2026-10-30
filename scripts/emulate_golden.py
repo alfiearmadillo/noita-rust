@@ -156,5 +156,60 @@ def random_golden():
     print(f"wrote {len(rows) - 1} vectors to crates/sim/tests/data/random_golden.csv")
 
 
+def noise_golden():
+    rng = random.Random(5)
+    rows = ["# x_bits,y_bits,z_bits,result_bits: simplex3 (0x872560) in Ghidra's emulator"]
+    cases = [(0.0, 0.0, 0.0), (1.0, 1.0, 1.0), (0.5, 0.5, 0.5), (-1.5, 2.25, -0.75)]
+    for _ in range(400):
+        scale = rng.choice([1.0, 10.0, 300.0])
+        cases.append(tuple(rng.uniform(-scale, scale) for _ in range(3)))
+    for x, y, z in cases:
+        regs = {"XMM0": bits(x), "XMM1": bits(y), "XMM2": bits(z)}
+        out = emulate(0x872560, regs, ret="XMM0", max_steps=100000)
+        rows.append(f"{bits(x):#018x},{bits(y):#018x},{bits(z):#018x},{low(out['registers']['XMM0'], 64):#018x}")
+    with open("crates/sim/tests/data/noise_golden.csv", "w", newline="\n") as f:
+        f.write("\n".join(rows) + "\n")
+    print(f"wrote {len(rows) - 1} vectors to crates/sim/tests/data/noise_golden.csv")
+
+
+def noise2d_golden():
+    rng = random.Random(9)
+    rows = ["# fn,x_bits,y_bits,result_bits: simplex2 0x872d40, perlin2 0x872a20, value2 0x872be0 (f32) in Ghidra's emulator"]
+    cases = [(0.0, 0.0), (1.0, 1.0), (-1.0, -1.0), (0.5, -0.5), (255.0, 256.0), (-256.5, 3.25)]
+    for _ in range(300):
+        scale = rng.choice([1.0, 8.0, 200.0, 5000.0])
+        x, y = rf32(rng.uniform(-scale, scale)), rf32(rng.uniform(-scale, scale))
+        cases.append((float(round(x)) if rng.random() < 0.15 else x, y))
+    for name, addr in (("simplex2", 0x872D40), ("perlin2", 0x872A20), ("value2", 0x872BE0)):
+        for x, y in cases:
+            out = emulate(addr, {"XMM0": f32(x), "XMM1": f32(y)}, ret="XMM0", max_steps=100000)
+            rows.append(f"{name},{f32(x):#010x},{f32(y):#010x},{low(out['registers']['XMM0'], 32):#010x}")
+    with open("crates/sim/tests/data/noise2d_golden.csv", "w", newline="\n") as f:
+        f.write("\n".join(rows) + "\n")
+    print(f"wrote {len(rows) - 1} vectors to crates/sim/tests/data/noise2d_golden.csv")
+
+
+def warp_golden():
+    rng = random.Random(11)
+    rows = ["# off_x_bits,off_y_bits,strength_bits,x_bits,y_bits,u_bits,v_bits: world_to_wang (0x87ce50) in Ghidra's emulator"]
+    # The exe calls floor through a DLL import; the stub (integer floor, returns in ST0) replaces its IAT target.
+    stub = bytes.fromhex("f20f10442404" "f20f2cc0" "f20f2ac8" "660f2fc8" "7601" "48" "f20f2ac0" "f20f114424f8" "dd4424f8" "c3")
+    for _ in range(500):
+        off_x, off_y = rng.uniform(-100000, 100000), 7168.0
+        strength = rng.choice([0.0, -1.0, 0.5, 1.0, 2.0, rf32(rng.uniform(0.1, 4.0))])
+        x, y = rng.uniform(-40000, 40000), rng.uniform(-10000, 40000)
+        if rng.random() < 0.2:
+            x, y = float(round(x)), float(round(y))
+        mem = [(0x30000000, stub), (0xF07320, struct.pack("<I", 0x30000000)),
+               (0x1206FB0, struct.pack("<d", off_x)), (0x12051B0, struct.pack("<d", off_y))]
+        regs = {"ECX": SCRATCH, "XMM1": f32(strength), "XMM2": bits(x), "XMM3": bits(y)}
+        out = emulate(0x87CE50, regs, read=[(SCRATCH, 8)], mem=mem, max_steps=100000)
+        u, v = struct.unpack("<II", bytes.fromhex(out["memory"][0]["hex"]))
+        rows.append(f"{bits(off_x):#018x},{bits(off_y):#018x},{f32(strength):#010x},{bits(x):#018x},{bits(y):#018x},{u:#010x},{v:#010x}")
+    with open("crates/worldgen/tests/data/warp_golden.csv", "w", newline="\n") as f:
+        f.write("\n".join(rows) + "\n")
+    print(f"wrote {len(rows) - 1} vectors to crates/worldgen/tests/data/warp_golden.csv")
+
+
 if __name__ == "__main__":
-    {"set_seed": set_seed, "random": random_golden}[sys.argv[1]]()
+    {"set_seed": set_seed, "random": random_golden, "noise": noise_golden, "noise2d": noise2d_golden, "warp": warp_golden}[sys.argv[1]]()
