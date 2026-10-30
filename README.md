@@ -85,6 +85,8 @@ cargo run -p noita_probe -- peek 0x35ab2950 0x40         # raw dwords at an addr
 cargo run -p noita_probe -- scan 0x1017b24               # addresses holding a dword (here: the worker vtable)
 cargo run -p noita_probe -- workers                      # every region worker: origin, RNG, full counter, dirty rect
 cargo run -p noita_probe -- follow 0 0 128 128 out --frames 120   # a TSV per game frame
+cargo run -p noita_probe -- biomes out_dir               # world seed, Wang offset and every Wang biome's images (needs a started run)
+cargo run --release -p worldgen --example compare_live -- out_dir   # compares them with the ported generator
 ```
 
 The image is fixed-base (no ASLR), so addresses are absolute: the game state pointer at `0x122374C` (first dword is

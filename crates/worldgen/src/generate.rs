@@ -11,7 +11,8 @@ use noita_data::materials::{self, MaterialDef};
 use noita_data::sim_materials::load_png;
 
 use crate::biome;
-use crate::terrain::{ColorTable, WangBiome, WangMap, WangParams};
+use crate::rules::RuleList;
+use crate::terrain::{ColorTable, Converted, WangBiome, WangMap, WangParams};
 use crate::wang::{Tileset, WangRng};
 use sim::random::Random;
 
@@ -126,51 +127,41 @@ pub fn wang_params(defs: &[MaterialDef]) -> Vec<WangParams> {
         .collect()
 }
 
-/// Generates `size` pixels of `biome` (a file name in `data/biome` without extension), starting
-/// `inset` pixels inside the first biome map chunk that shows it, in the world of `world_seed`.
-///
-/// The biome's Wang map is what `ProceduralTerrain::Init` builds when it loads the biome: for
-/// every `_biomes_all.xml` entry up to this one that is a Wang biome, a `wang_map_width` x
-/// `wang_map_height` map is generated from one generator stream that started as
-/// `Random(world seed)` (the exe passes seed 0, which continues the thread's generator). The
-/// stream order is derived from the decompile and not checked against the running game; the
-/// validity retries, spawn functions and pixel scenes are not ported.
-///
-/// `files` is the directory holding the extracted reference `data/`; `defs` are its parsed
-/// materials in document order (the table index is the position).
-pub fn generate_biome(
-    files: &Path,
-    defs: &[MaterialDef],
-    biome_name: &str,
-    world_seed: u32,
-    inset: (i32, i32),
-    size: (usize, usize),
-) -> Result<Generated, String> {
-    let index_by_name: HashMap<&str, u32> = defs
-        .iter()
+/// One `_biomes_all.xml` entry after loading: its definition and, for a Wang biome, the RGB map
+/// the exe generated for it.
+pub struct LoadedBiome {
+    pub file: String,
+    pub topology: biome::Topology,
+    pub rules: RuleList,
+    pub map_rgb: Option<Vec<u8>>,
+}
+
+fn name_index(defs: &[MaterialDef]) -> HashMap<&str, u32> {
+    defs.iter()
         .enumerate()
         .rev()
         .map(|(i, d)| (d.name.as_str(), i as u32))
-        .collect();
-    let colors = ColorTable::new(
-        defs.iter()
-            .map(|d| {
-                d.attr("wang_color")
-                    .and_then(|c| u32::from_str_radix(c.trim(), 16).ok())
-                    .unwrap_or(0)
-            })
-            .collect(),
-    );
-    let params = wang_params(defs);
-    let resolve = |n: &str| index_by_name.get(n).copied().unwrap_or(0);
+        .collect()
+}
 
-    let target = format!("data/biome/{biome_name}.xml");
-    let entries = biome_entries(files)?;
+/// Loads the `_biomes_all.xml` entries in order, up to and including the first one whose file
+/// is `stop_at` (all of them when `None`), generating each Wang biome's map from one shared
+/// generator stream that starts as `Random(world seed)`: the exe passes seed 0 when it builds
+/// these maps, which continues the thread's generator (`0x867500`). Entries that cannot be read
+/// are skipped. The stream order is derived from the decompile.
+pub fn load_biomes(
+    files: &Path,
+    defs: &[MaterialDef],
+    world_seed: u32,
+    stop_at: Option<&str>,
+) -> Result<Vec<LoadedBiome>, String> {
+    let index_by_name = name_index(defs);
+    let resolve = |n: &str| index_by_name.get(n).copied().unwrap_or(0);
     let mut rng = WangRng::new(f64::from(world_seed));
     let mut tilesets: HashMap<String, Tileset> = HashMap::new();
-    let mut found = None;
-    for (file, _) in &entries {
-        let Ok(xml) = std::fs::read_to_string(files.join(file)) else {
+    let mut loaded = Vec::new();
+    for (file, _) in biome_entries(files)? {
+        let Ok(xml) = std::fs::read_to_string(files.join(&file)) else {
             continue;
         };
         let Ok((topology, rules)) = biome::parse(&xml, resolve) else {
@@ -180,7 +171,7 @@ pub fn generate_biome(
             topology.wang_map_width as usize,
             topology.wang_map_height as usize,
         );
-        let mut map = None;
+        let mut map_rgb = None;
         if topology.kind == "BIOME_WANG_TILE"
             && let Some(template) = &topology.wang_template_file
             && !template.is_empty()
@@ -200,22 +191,41 @@ pub fn generate_biome(
                     .map_err(|e| format!("{template}: {e:?}"))?;
                 tilesets.insert(template.clone(), set);
             }
-            map = Some(
+            map_rgb = Some(
                 tilesets[template]
                     .generate_map_with(&mut rng, w, h)
                     .map_err(|e| format!("{template}: {e:?}"))?,
             );
         }
-        if *file == target {
-            found = Some((topology, rules, map, w, h));
+        let done = stop_at == Some(file.as_str());
+        loaded.push(LoadedBiome {
+            file,
+            topology,
+            rules,
+            map_rgb,
+        });
+        if done {
             break;
         }
     }
-    let (topology, rules, map, w, h) =
-        found.ok_or_else(|| format!("{target} is not in _biomes_all.xml"))?;
-    let map_rgb = map.ok_or_else(|| format!("{biome_name} is not a Wang biome"))?;
+    Ok(loaded)
+}
 
-    let spawn_index: HashMap<u32, u32> = topology
+/// The float, material and spawn images of a loaded Wang biome (`0x8704c0`), or `None` for a
+/// biome without a generated map.
+pub fn convert_biome(files: &Path, defs: &[MaterialDef], biome: &LoadedBiome) -> Option<Converted> {
+    let rgb = biome.map_rgb.as_ref()?;
+    let colors = ColorTable::new(
+        defs.iter()
+            .map(|d| {
+                d.attr("wang_color")
+                    .and_then(|c| u32::from_str_radix(c.trim(), 16).ok())
+                    .unwrap_or(0)
+            })
+            .collect(),
+    );
+    let spawn_index: HashMap<u32, u32> = biome
+        .topology
         .lua_script
         .as_ref()
         .and_then(|s| std::fs::read_to_string(files.join(s)).ok())
@@ -225,8 +235,42 @@ pub fn generate_biome(
         .enumerate()
         .map(|(i, c)| (*c, i as u32))
         .collect();
-    let converted =
-        WangMap::from_wang_rgb(&map_rgb, w, h, &colors, |c| spawn_index.get(&c).copied());
+    let (w, h) = (
+        biome.topology.wang_map_width as usize,
+        biome.topology.wang_map_height as usize,
+    );
+    Some(WangMap::from_wang_rgb(rgb, w, h, &colors, |c| {
+        spawn_index.get(&c).copied()
+    }))
+}
+
+/// Generates `size` pixels of `biome` (a file name in `data/biome` without extension), starting
+/// `inset` pixels inside the first biome map chunk that shows it, in the world of `world_seed`.
+///
+/// The biome's Wang map is what `ProceduralTerrain::Init` builds when it loads the biome (see
+/// `load_biomes`); the validity retries, spawn functions and pixel scenes are not ported.
+///
+/// `files` is the directory holding the extracted reference `data/`; `defs` are its parsed
+/// materials in document order (the table index is the position).
+pub fn generate_biome(
+    files: &Path,
+    defs: &[MaterialDef],
+    biome_name: &str,
+    world_seed: u32,
+    inset: (i32, i32),
+    size: (usize, usize),
+) -> Result<Generated, String> {
+    let params = wang_params(defs);
+    let target = format!("data/biome/{biome_name}.xml");
+    let mut loaded = load_biomes(files, defs, world_seed, Some(&target))?;
+    if loaded.last().is_none_or(|b| b.file != target) {
+        return Err(format!("{target} is not in _biomes_all.xml"));
+    }
+    let last = loaded.pop().expect("checked above");
+    let converted = convert_biome(files, defs, &last)
+        .ok_or_else(|| format!("{biome_name} is not a Wang biome"))?;
+    let rules = last.rules;
+    let entries = biome_entries(files)?;
     let spawn_pixels = converted.spawn.data.iter().filter(|&&s| s != 0).count();
 
     let offset = wang_offset(world_seed);

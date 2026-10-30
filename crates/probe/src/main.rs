@@ -9,8 +9,10 @@
 //!                                            ASCII map of a rectangle and optional per-cell dump
 //!   noita_probe follow <x> <y> <w> <h> <DIR> [--frames N]
 //!                                            one TSV per game frame (pause the game for coherent maps)
+//!   noita_probe biomes <DIR>                 the world seed, Wang offset and every Wang biome's images
 //!   Options for every command: `--grid 0xADDR` overrides the GridWorld pointer.
 
+mod biomes;
 mod layout;
 mod mem;
 
@@ -178,12 +180,68 @@ fn run(raw: Vec<String>) -> Result<(), String> {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             follow(&process, &args, (x, y, w, h), dir)
         }
+        "biomes" => {
+            let dir = args.positional.get(1).ok_or("missing output directory")?;
+            dump_biomes(&process, dir)
+        }
         _ => Err(usage()),
     }
 }
 
+/// Writes `world.txt` (seed, Wang offset bits) and `<n>.txt` per Wang biome: a header line
+/// `file kind width height`, the float image as hex bits, then the material image.
+fn dump_biomes(process: &Process, dir: &str) -> Result<(), String> {
+    let world = biomes::read(process).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let write = |name: String, text: String| {
+        std::fs::write(std::path::Path::new(dir).join(name), text).map_err(|e| e.to_string())
+    };
+    write(
+        "world.txt".to_owned(),
+        format!(
+            "seed {}\noffset {:#x} {:#x}\n",
+            world.seed,
+            world.offset.0.to_bits(),
+            world.offset.1.to_bits()
+        ),
+    )?;
+    println!(
+        "seed {} wang offset ({}, {}), {} biome objects",
+        world.seed,
+        world.offset.0,
+        world.offset.1,
+        world.biomes.len()
+    );
+    for (i, b) in world.biomes.iter().enumerate() {
+        let Some(w) = &b.wang else {
+            println!("  {i}: {} (type {}, no Wang images)", b.file, b.kind);
+            continue;
+        };
+        let floats: Vec<String> = w
+            .values
+            .iter()
+            .map(|v| format!("{:x}", v.to_bits()))
+            .collect();
+        let mats: Vec<String> = w.materials.iter().map(u16::to_string).collect();
+        write(
+            format!("{i}.txt"),
+            format!(
+                "{} {} {} {}\n{}\n{}\n",
+                b.file,
+                b.kind,
+                w.width,
+                w.height,
+                floats.join(" "),
+                mats.join(" ")
+            ),
+        )?;
+        println!("  {i}: {} {}x{} -> {i}.txt", b.file, w.width, w.height);
+    }
+    Ok(())
+}
+
 fn usage() -> String {
-    "usage: noita_probe <status|rng|cell|grid|follow> ... (see the file header for options)"
+    "usage: noita_probe <status|rng|cell|grid|follow|biomes> ... (see the file header for options)"
         .to_owned()
 }
 
