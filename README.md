@@ -687,7 +687,7 @@ are the pixel-scene fill, not this. The lookup depends on the biome type (`+4`):
   region into the world image cell by cell (`0x870250` / `0x929dc0`; only the destination is clamped). The lookup uses
   the position + offset with offset = `(biome map width * 0.5 * 512, biome_offset_y * 512)` = (17920, 7168), not a random
   value. Checked against the running game (`noita_probe biomes`, `compare_live`): the seed, the offset and the image
-  size match, and about 98 % of the pixels of all 39 Wang biomes; `static_tile="1"` biomes (the temples) use their
+  size match, and 34 of the 51 regions pixel for pixel (about 98 % of the world image); `static_tile="1"` biomes (the temples) use their
   template as a fixed picture and are not Wang regions.
 - **Region generation** (`0x879bf0`, `worldgen::world::region_wang_seed`): the region image is `min(width, 1024)` x
   `min(height, 1024)` Wang pixels; the Wang seed is a `Random(double world seed)` stepped `width % 11 + seed % 12` times,
@@ -707,8 +707,7 @@ are the pixel-scene fill, not this. The lookup depends on the biome type (`+4`):
   including the neighbor fill; the spawn-function path is not covered): for each
   non-black pixel the color word is `0xAABBGGRR`. White (`0xffffff`) stores its gray; a color equal to a material's
   `wang_color` (`0x704f00`: air's color gives index 0, otherwise the first material from index 1 with that RGB) stores
-  `index + 1` in the material image (`u16`) and a float of 1 (air color: -1); a color registered through
-  `RegisterSpawnFunction` (the Lua number is `0xAARRGGBB`; its low 24 bits are the template pixel's RGB) stores `function index + 1` in a `u8` image and leaves the float at 0;
+  `index + 1` in the material image (`u16`) and a float of 1 (air color: -1); a spawn color (the rows of `data/scripts/wang_scripts.csv` plus the biome script's `RegisterSpawnFunction` calls; the Lua number is `0xAARRGGBB`, its low 24 bits are the template pixel's RGB) stores `function index + 1` in a `u8` image and leaves the float at 0;
   anything else stores the gray `((g/255) + 2 (b/255)) / 3`. Black stays 0. Pixels with no material and float 0 then take
   the majority material of their left, right, upper and lower neighbours (`0x92a260`, the first value to reach the top
   count; the image wraps). Image getters (`0x92a1d0` etc.) wrap both axes and read 0 for an empty image.

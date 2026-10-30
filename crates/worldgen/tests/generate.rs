@@ -17,8 +17,8 @@ fn spawn_function_colors_are_the_written_rgb() {
          RegisterSpawnFunction( 0xffB40000, \"spawn_fungi\" )\n-- RegisterSpawnFunction( 1, \"x\" )",
     );
     assert_eq!(colors.len(), 2);
-    assert_eq!(colors[&0x0000ff], "spawn_nest");
-    assert_eq!(colors[&0xb40000], "spawn_fungi");
+    assert_eq!(colors[0], (0x0000ff, "spawn_nest".to_owned()));
+    assert_eq!(colors[1], (0xb40000, "spawn_fungi".to_owned()));
 }
 
 #[test]

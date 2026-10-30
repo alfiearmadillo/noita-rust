@@ -12,7 +12,7 @@ use noita_data::sim_materials::load_png;
 use sim::random::Random;
 
 use crate::biome::{self, Topology};
-use crate::generate::{Generated, spawn_colors, wang_params};
+use crate::generate::{Generated, spawn_colors, wang_params, wang_script_colors};
 use crate::rules::RuleList;
 use crate::terrain::{ColorTable, Converted, Image, WangBiome, WangMap};
 use crate::wang::Tileset;
@@ -262,6 +262,9 @@ pub fn build_world_map_with(
     let mut materials = vec![0_u16; ww * wh];
     let mut spawn = vec![0_u8; ww * wh];
     let mut tilesets: HashMap<String, Tileset> = HashMap::new();
+    let global_spawns = std::fs::read_to_string(files.join("data/scripts/wang_scripts.csv"))
+        .map(|s| wang_script_colors(&s))
+        .unwrap_or_default();
     let mut done = vec![false; biome_map.width * biome_map.height];
     for (region_index, r) in regions.iter().enumerate() {
         let def = &entries.biomes[r.biome];
@@ -289,17 +292,19 @@ pub fn build_world_map_with(
                 rh,
             )
             .map_err(|e| format!("{template}: {e:?}"))?;
-        let spawn_index: HashMap<u32, u32> = def
+        // The spawn colors: the CSV registry first, then the biome script's own.
+        let mut spawn_index: HashMap<u32, u32> = HashMap::new();
+        let script = def
             .topology
             .lua_script
             .as_ref()
             .and_then(|s| std::fs::read_to_string(files.join(s)).ok())
             .map(|s| spawn_colors(&s))
-            .unwrap_or_default()
-            .keys()
-            .enumerate()
-            .map(|(i, c)| (*c, i as u32))
-            .collect();
+            .unwrap_or_default();
+        for (c, _) in global_spawns.iter().chain(&script) {
+            let next = spawn_index.len() as u32;
+            spawn_index.entry(*c).or_insert(next);
+        }
         let img = WangMap::from_wang_rgb(&rgb, rw, rh, &colors, |c| spawn_index.get(&c).copied());
         for cy in r.y0..=r.y1 {
             for cx in r.x0..=r.x1 {

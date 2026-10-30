@@ -4,7 +4,6 @@
 //! This is the slice of world generation that is ported: no biome driver retries, spawn
 //! functions, pixel scenes, `BitmapCaves` or vegetation.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use noita_data::materials::{self, MaterialDef};
@@ -26,11 +25,11 @@ pub struct Generated {
     pub spawn_pixels: usize,
 }
 
-/// `RegisterSpawnFunction( 0x........, "name" )` colors of a biome script as `0xRRGGBB`: the Lua
-/// number is written `0xAARRGGBB`, and the template pixels the running game treats as spawn pixels
-/// have exactly those RGB values.
-pub fn spawn_colors(lua: &str) -> HashMap<u32, String> {
-    let mut out = HashMap::new();
+/// `RegisterSpawnFunction( 0x........, "name" )` registrations of a biome script in file order, as
+/// `(0xRRGGBB, name)`: the Lua number is written `0xAARRGGBB`, and the template pixels the
+/// running game treats as spawn pixels have exactly those RGB values.
+pub fn spawn_colors(lua: &str) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
     for line in lua.lines() {
         let Some(rest) = line.trim().strip_prefix("RegisterSpawnFunction(") else {
             continue;
@@ -43,11 +42,25 @@ pub fn spawn_colors(lua: &str) -> HashMap<u32, String> {
         };
         let name = name.trim().trim_start_matches('"');
         let name = name.split('"').next().unwrap_or_default();
-        out.insert(word & 0xff_ffff, name.to_owned());
+        out.push((word & 0xff_ffff, name.to_owned()));
     }
     out
 }
 
+/// `data/scripts/wang_scripts.csv`: the spawn functions every biome knows (`color,function,
+/// in-path min, in-path max, outside-path min, outside-path max`, `-1` = no limit), as
+/// `(0xRRGGBB, name)` in file order. The running game blanks these template colors like the ones a
+/// biome script registers.
+pub fn wang_script_colors(csv: &str) -> Vec<(u32, String)> {
+    csv.lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut f = l.split(',');
+            let color = u32::from_str_radix(f.next()?.trim(), 16).ok()?;
+            Some((color & 0xff_ffff, f.next()?.trim().to_owned()))
+        })
+        .collect()
+}
 /// The Wang numbers of every material (`wang_noise_percent`, `wang_curvature`,
 /// `wang_noise_type`), with the `CellData` constructor defaults for absent attributes.
 pub fn wang_params(defs: &[MaterialDef]) -> Vec<WangParams> {
