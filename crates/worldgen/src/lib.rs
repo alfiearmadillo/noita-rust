@@ -7,3 +7,4 @@ pub mod rules;
 pub mod terrain;
 pub mod wang;
 pub mod warp;
+pub mod world;

@@ -678,23 +678,37 @@ The per-chunk generator is `0x73b040` (one task per 512x512 chunk, started by `0
 cell with `0x7048c0`; spawn-function pixels are handled afterwards (`0x87d380`, a 10-pixel grid). `0x880860` / `0x880fb0`
 are the pixel-scene fill, not this. The lookup depends on the biome type (`+4`): 0 procedural, 1 image, 2 Wang tile.
 
-- **The biome's own map** (`+0x1d4` of the biome object): `ProceduralTerrain::Init` (`0x87a900`) loads the entries of
-  `_biomes_all.xml` in order (`0x86b9f0`); for every Wang biome it generates a `wang_map_width` x `wang_map_height` map
-  (`0x867de0` -> `0x867500`) with seed 0.0, which continues the thread's generator instead of reseeding it. That generator
-  starts as `Random(world seed)` (`0x1207018` is set from the world seed at the top of `Init`), so each biome's map depends
-  on every Wang entry loaded before it. The lookup wraps over this map (period `wang_map_width * 10` pixels). The stream
-  order follows the decompile and is not checked against the running game. `Init` also derives the Wang offset: a
-  `Random(world seed)` stepped three times, the third draw `(f32)(u * 200000) - 100000` is `offset_x` (`worldgen::generate::
-  wang_offset`; `offset_y` = 7168); the biome map (`data/biome_impl/biome_map.png`, one pixel per chunk, colors from the
-  `color` of each `<Biome>` entry) is indexed with world position + offset, and regions are 4-connected same-color
-  components (`0x92a970`, a BFS returning their bounding box).
-
+- **The world image** (`ProceduralTerrain::Init`, `0x87a900`; `worldgen::world`): every Wang biome samples the *same*
+  image, `biome map width * 512 / 10` x `height * 512 / 10` pixels (3584 x 2457; one Wang pixel is 10 world pixels, one
+  biome map pixel is a 512-pixel chunk). `Init` reads `_biomes_all.xml` (`0x86b9f0`), splits the biome map
+  (`data/biome_impl/biome_map.png`, one pixel per chunk, pixel colors = the `color` of each `<Biome>` entry) into
+  regions (4-connected same-biome components, `0x92a970`, a BFS returning the bounding box; a region claims every cell of
+  its biome inside the box), generates one image per region (`0x879bf0`, below) and copies the biome map cells of the
+  region into the world image cell by cell (`0x870250` / `0x929dc0`; only the destination is clamped). The lookup uses
+  the position + offset with offset = `(biome map width * 0.5 * 512, biome_offset_y * 512)` = (17920, 7168), not a random
+  value. Checked against the running game (`noita_probe biomes`, `compare_live`): the seed, the offset and the image
+  size match, and about 98 % of the pixels of all 39 Wang biomes; `static_tile="1"` biomes (the temples) use their
+  template as a fixed picture and are not Wang regions.
+- **Region generation** (`0x879bf0`, `worldgen::world::region_wang_seed`): the region image is `min(width, 1024)` x
+  `min(height, 1024)` Wang pixels; the Wang seed is a `Random(double world seed)` stepped `width % 11 + seed % 12` times,
+  then once per attempt, scaled by `2147483645`. Regions at most 205 Wang pixels tall go through the validity and
+  spawn-limit function `0x8771a0` (path finding, a random cap per spawn function that blanks the extra spawn pixels to
+  black, clearing of the start area) and are regenerated (up to 100 attempts) when it fails; coalmine and excavationsite
+  regions also run `0x876fb0`. Neither is ported, so small regions differ from the game wherever it retried or blanked
+  pixels, and the rows of regions taller than 1024 pixels (the game reads past the image there) are not reproduced.
+- **Material order**: the engine's material table is not the document order of `materials.xml`: all `<CellData>` in
+  document order (a repeated name is not added again), then the `<CellDataChild>` elements in passes over a pending list
+  (a child whose parent is already in the table is added and replaced in the list by the last pending child, which is
+  then examined in its place; the others wait for the next pass). `noita_data::materials::engine_order` reproduces
+  the 466 names of the running game (`noita_probe biomes` writes them to `materials.txt`). Wang images, rules and
+  `wang_color` lookups use this order; the sandbox keeps the document order and `generate_biome` maps back.
+- **Wang offset**: `ctx + 0x30` is `(f32)s1 * 9999 + 1` for the world context's first draw.
 - **Region images** (`0x8704c0`, called by `0x879bf0` after generation; `WangMap::from_wang_rgb`, 60 emulated cases match
   including the neighbor fill; the spawn-function path is not covered): for each
   non-black pixel the color word is `0xAABBGGRR`. White (`0xffffff`) stores its gray; a color equal to a material's
   `wang_color` (`0x704f00`: air's color gives index 0, otherwise the first material from index 1 with that RGB) stores
   `index + 1` in the material image (`u16`) and a float of 1 (air color: -1); a color registered through
-  `RegisterSpawnFunction` (ABGR in the Lua file) stores `function index + 1` in a `u8` image and leaves the float at 0;
+  `RegisterSpawnFunction` (the Lua number is `0xAARRGGBB`; its low 24 bits are the template pixel's RGB) stores `function index + 1` in a `u8` image and leaves the float at 0;
   anything else stores the gray `((g/255) + 2 (b/255)) / 3`. Black stays 0. Pixels with no material and float 0 then take
   the majority material of their left, right, upper and lower neighbours (`0x92a260`, the first value to reach the top
   count; the image wraps). Image getters (`0x92a1d0` etc.) wrap both axes and read 0 for an empty image.

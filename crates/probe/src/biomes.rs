@@ -6,8 +6,9 @@ use std::io;
 
 use crate::mem::Mem;
 
-/// `DAT_01204b98`: the `ProceduralTerrain` object (the first argument of `0x87a900`).
-pub const PROCEDURAL_TERRAIN: u32 = 0x0120_4B98;
+/// `GridWorld + 0x458`: the `ProceduralTerrain` object (found by scanning the live GridWorld for
+/// a 70x48 biome grid; the global `DAT_01204b98` does not hold it).
+pub const GRID_TERRAIN: u32 = 0x458;
 /// `DAT_01205004`: the world seed.
 pub const WORLD_SEED: u32 = 0x0120_5004;
 /// `DAT_01206fb0` / `DAT_012051b0`: the Wang offset (doubles).
@@ -82,8 +83,8 @@ fn wang_images<M: Mem>(mem: &M, base: u32) -> io::Result<Option<WangImages>> {
 }
 
 /// Every distinct biome object in the terrain grid, in first-seen order.
-pub fn read<M: Mem>(mem: &M) -> io::Result<LiveWorld> {
-    let terrain = mem.u32(PROCEDURAL_TERRAIN)?;
+pub fn read<M: Mem>(mem: &M, grid_world: u32) -> io::Result<LiveWorld> {
+    let terrain = mem.u32(grid_world + GRID_TERRAIN)?;
     if terrain == 0 {
         return Err(io::Error::other(
             "no ProceduralTerrain yet (start or load a game first)",
@@ -131,7 +132,7 @@ mod tests {
     #[test]
     fn reads_a_wang_biome_from_the_grid() {
         let mut m = Image::default();
-        m.put_u32(PROCEDURAL_TERRAIN, 0x1000);
+        m.put_u32(0xF000 + GRID_TERRAIN, 0x1000);
         m.put_u32(WORLD_SEED, 77);
         m.put(WANG_OFFSET[0], &(-12.5f64).to_le_bytes());
         m.put(WANG_OFFSET[1], &7168f64.to_le_bytes());
@@ -161,7 +162,7 @@ mod tests {
             .collect();
         m.put(0x6000, &floats);
         m.put(0x7000, &[1, 0, 2, 0, 3, 0, 0, 0]);
-        let world = read(&m).unwrap();
+        let world = read(&m, 0xF000).unwrap();
         assert_eq!((world.seed, world.offset), (77, (-12.5, 7168.0)));
         assert_eq!(world.biomes.len(), 1);
         let b = &world.biomes[0];

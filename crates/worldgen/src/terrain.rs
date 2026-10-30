@@ -182,6 +182,15 @@ impl ColorTable {
     }
 }
 
+/// The last pass of `0x8704c0`, chosen by its fourth argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FillMode {
+    /// Pixels with neither material nor float take the majority material of their neighbours.
+    Neighbors,
+    /// Only spawn-function pixels whose neighbours are mostly air-colored become air.
+    SpawnToAir,
+}
+
 /// The result of converting a generated Wang image (`0x8704c0`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Converted {
@@ -237,6 +246,18 @@ impl WangMap {
         colors: &ColorTable,
         spawn_of: impl Fn(u32) -> Option<u32>,
     ) -> Converted {
+        Self::from_wang_rgb_with(rgb, width, height, colors, spawn_of, FillMode::Neighbors)
+    }
+
+    /// `from_wang_rgb` with the choice of the final pass (the call flag of `0x8704c0`).
+    pub fn from_wang_rgb_with(
+        rgb: &[u8],
+        width: usize,
+        height: usize,
+        colors: &ColorTable,
+        spawn_of: impl Fn(u32) -> Option<u32>,
+        mode: FillMode,
+    ) -> Converted {
         let n = width * height;
         let mut values = vec![0.0_f32; n];
         let mut materials = vec![0_u16; n];
@@ -273,6 +294,36 @@ impl WangMap {
             }
         }
         let (w, h) = (width as i32, height as i32);
+        if mode == FillMode::SpawnToAir {
+            let mut img = Image::new(w, h, materials);
+            let air_pixels = img.data.iter().filter(|&&m| m == 1).count();
+            if spawn.iter().any(|&s| s != 0) && air_pixels > 0 {
+                for y in 0..h {
+                    for x in 0..w {
+                        let i = (y * w + x) as usize;
+                        if spawn[i] != 0 && img.data[i] == 0 {
+                            let m = majority([
+                                img.get(x - 1, y),
+                                img.get(x + 1, y),
+                                img.get(x, y - 1),
+                                img.get(x, y + 1),
+                            ]);
+                            if m == 1 {
+                                img.data[i] = 1;
+                                values[i] = -1.0;
+                            }
+                        }
+                    }
+                }
+            }
+            return Converted {
+                map: WangMap {
+                    values: Image::new(w, h, values),
+                    materials: img,
+                },
+                spawn: Image::new(w, h, spawn),
+            };
+        }
         let old = Image::new(w, h, materials);
         let mut dilated = old.data.clone();
         for y in 0..h {

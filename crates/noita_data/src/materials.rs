@@ -4,11 +4,14 @@
 //! `None` because the engine's defaults live in the executable and are not yet recovered.
 
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialDef {
     pub name: String,
+    /// Defined by a `<CellDataChild>` element (the engine adds those after every `<CellData>`).
+    pub is_child: bool,
     /// Resolved attributes (parent's, overridden by the child's own).
     pub attrs: BTreeMap<String, String>,
     /// `<Graphics color="AARRGGBB">`, inherited from the parent when absent.
@@ -103,6 +106,7 @@ pub fn parse(xml: &str) -> Result<Vec<MaterialDef>, MaterialsError> {
             parent: is_child.then(|| node.attribute("_parent").unwrap_or_default().to_owned()),
             own: MaterialDef {
                 name,
+                is_child,
                 attrs: node
                     .attributes()
                     .map(|a| (a.name().to_owned(), a.value().to_owned()))
@@ -138,6 +142,45 @@ pub fn parse(xml: &str) -> Result<Vec<MaterialDef>, MaterialsError> {
         .into_iter()
         .map(|d| d.expect("all resolved"))
         .collect())
+}
+
+/// The engine's material table order, as indices into `defs` (document order): every
+/// `<CellData>` in document order, then the `<CellDataChild>` elements. The children are taken
+/// in passes over a pending list: one whose parent is already in the table is added and replaced
+/// in the list by the last pending child (which is then examined in its place); the others are
+/// left for the next pass. A name that is already in the table is not added again. This
+/// reproduces the 466 material names of the running game exactly, which differ from document
+/// order (`noita_probe biomes` writes them to `materials.txt`).
+pub fn engine_order(defs: &[MaterialDef]) -> Vec<usize> {
+    let mut order: Vec<usize> = Vec::new();
+    let mut names: HashSet<&str> = HashSet::new();
+    for i in (0..defs.len()).filter(|&i| !defs[i].is_child) {
+        if names.insert(defs[i].name.as_str()) {
+            order.push(i);
+        }
+    }
+    let mut pending: Vec<usize> = (0..defs.len()).filter(|&i| defs[i].is_child).collect();
+    loop {
+        let mut progressed = false;
+        let mut k = 0;
+        while k < pending.len() {
+            let i = pending[k];
+            let parent = defs[i].attr("_parent").unwrap_or_default();
+            if names.contains(parent) {
+                if names.insert(defs[i].name.as_str()) {
+                    order.push(i);
+                }
+                pending.swap_remove(k);
+                progressed = true;
+            } else {
+                k += 1;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    order
 }
 
 /// Parses top-level `<Reaction>` records in document order, preserving their raw attributes.
@@ -207,6 +250,7 @@ fn resolve(
 
     let mut def = resolved[p].clone().expect("parent resolved");
     def.name.clone_from(&own.name);
+    def.is_child = own.is_child;
     def.attrs
         .extend(own.attrs.iter().map(|(k, v)| (k.clone(), v.clone())));
     if own.graphics_color.is_some() {
@@ -304,6 +348,24 @@ mod tests {
             blue.texture_file.as_deref(),
             Some("data/materials_gfx/sand.png")
         );
+    }
+
+    #[test]
+    fn engine_order_puts_children_after_cell_data_in_swap_remove_passes() {
+        let xml = r#"<Materials>
+            <CellData name="a"/>
+            <CellDataChild _parent="b2" name="c"/>
+            <CellDataChild _parent="a" name="b"/>
+            <CellData name="d"/>
+            <CellDataChild _parent="b" name="b2"/>
+            <CellData name="a"/>
+        </Materials>"#;
+        let defs = parse(xml).unwrap();
+        let names: Vec<&str> = engine_order(&defs)
+            .iter()
+            .map(|&i| defs[i].name.as_str())
+            .collect();
+        assert_eq!(names, ["a", "d", "b", "b2", "c"]);
     }
 
     #[test]

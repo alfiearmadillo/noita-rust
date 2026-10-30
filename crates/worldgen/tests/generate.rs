@@ -2,7 +2,8 @@
 
 use std::path::PathBuf;
 
-use worldgen::generate::{generate_biome, load_materials, spawn_colors, wang_offset};
+use worldgen::generate::{generate_biome, load_materials, spawn_colors};
+use worldgen::world::region_wang_seed;
 
 fn files() -> Option<PathBuf> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../noita_files");
@@ -10,28 +11,35 @@ fn files() -> Option<PathBuf> {
 }
 
 #[test]
-fn spawn_function_colors_are_abgr_words() {
+fn spawn_function_colors_are_the_written_rgb() {
     let colors = spawn_colors(
         "RegisterSpawnFunction( 0xff0000ff, \"spawn_nest\" )\n\
          RegisterSpawnFunction( 0xffB40000, \"spawn_fungi\" )\n-- RegisterSpawnFunction( 1, \"x\" )",
     );
     assert_eq!(colors.len(), 2);
-    assert_eq!(colors[&0xff0000], "spawn_nest");
-    assert_eq!(colors[&0x0000b4], "spawn_fungi");
+    assert_eq!(colors[&0x0000ff], "spawn_nest");
+    assert_eq!(colors[&0xb40000], "spawn_fungi");
 }
 
 #[test]
-fn wang_offset_is_the_third_draw_of_the_seeded_chain() {
+fn region_seed_is_a_later_draw_of_the_world_seed_chain() {
     // Independent check with the plain modulus instead of the engine's Schrage form.
     let step = |s: i64| s * 16807 % 2_147_483_647;
-    for seed in [12345u32, 0x2_2246, 3_000_000_000, 1] {
-        let mut d = f64::from(seed);
-        if d >= 2_147_483_647.0 {
-            d *= 0.5;
+    for (seed, width, attempt) in [
+        (12345u32, 300usize, 0u32),
+        (336_730_580, 1024, 0),
+        (7, 5, 2),
+    ] {
+        let mut s = f64::from(seed);
+        if s >= 2_147_483_647.0 {
+            s *= 0.5;
         }
-        let s3 = step(step(step(step(d as i64))));
-        let want = f64::from((s3 as f64 * 4.656_612_875e-10) as f32 * 200_000.0 - 100_000.0);
-        assert_eq!(wang_offset(seed), (want, 7168.0), "{seed}");
+        let mut s = step(s as i64);
+        for _ in 0..width % 11 + (seed % 12) as usize + attempt as usize + 1 {
+            s = step(s);
+        }
+        let want = s as f64 * 4.656_612_875e-10 * 2_147_483_645.0;
+        assert_eq!(region_wang_seed(seed, width, attempt), want, "{seed}");
     }
 }
 #[test]

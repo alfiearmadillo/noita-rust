@@ -182,7 +182,7 @@ fn run(raw: Vec<String>) -> Result<(), String> {
         }
         "biomes" => {
             let dir = args.positional.get(1).ok_or("missing output directory")?;
-            dump_biomes(&process, dir)
+            dump_biomes(&process, &args, dir)
         }
         _ => Err(usage()),
     }
@@ -190,8 +190,9 @@ fn run(raw: Vec<String>) -> Result<(), String> {
 
 /// Writes `world.txt` (seed, Wang offset bits) and `<n>.txt` per Wang biome: a header line
 /// `file kind width height`, the float image as hex bits, then the material image.
-fn dump_biomes(process: &Process, dir: &str) -> Result<(), String> {
-    let world = biomes::read(process).map_err(|e| e.to_string())?;
+fn dump_biomes(process: &Process, args: &Args, dir: &str) -> Result<(), String> {
+    let grid = Grid::open(process, args.grid).map_err(|e| e.to_string())?;
+    let world = biomes::read(process, grid.grid).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let write = |name: String, text: String| {
         std::fs::write(std::path::Path::new(dir).join(name), text).map_err(|e| e.to_string())
@@ -205,6 +206,10 @@ fn dump_biomes(process: &Process, dir: &str) -> Result<(), String> {
             world.offset.1.to_bits()
         ),
     )?;
+    let names = (0..grid.material_count())
+        .map(|id| grid.name(id).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    write("materials.txt".to_owned(), names.join("\n") + "\n")?;
     println!(
         "seed {} wang offset ({}, {}), {} biome objects",
         world.seed,

@@ -123,11 +123,14 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
     exe in Ghidra's emulator), the world to Wang warp, the biome `<Materials>` rule list with its noise helpers
     (`worldgen::rules`), the Wang-biome material lookup `0x87d0e0` type 2 with its samplers (`worldgen::terrain`), the
     biome XML reader and the image conversion `0x8704c0`; all emulator-verified (conversion: spawn colors not
-    covered). `render_biome` draws a biome from a seed, and `NOITA_BIOME=coalmine` loads a generated slice in the
-    game (`worldgen::generate`). Missing: the biome driver (region seeds, retries,
-    validity check `0x8771a0`), the biome map and region setup (`0x87a900`), procedural (type 0) biomes, pixel scenes,
-    spawn functions, `BitmapCaves` / `RandomMaterials`, vegetation extras of the chunk generator `0x73b040`.
-22. [ ] World streaming: chunk load/unload, world size, wrapping, edges.
+    covered). The world image (`worldgen::world`): biome map regions, per-region Wang images composited into the one
+    world-size image every Wang biome samples, the Wang offset, and the engine's material table order
+    (`noita_data::materials::engine_order`); checked against the running game with `noita_probe biomes` and
+    `compare_live` (seed, offset and image size equal, about 98 % of the pixels). `render_biome` draws a biome from a
+    seed, and `NOITA_BIOME=coalmine` loads a generated slice in the game (`worldgen::generate`). Missing: the
+    validity / spawn-limit check `0x8771a0` and the coalmine / excavationsite step `0x876fb0` of the region driver
+    (retries and blanked spawn pixels make small regions differ), procedural (type 0) biomes, pixel scenes,
+    spawn functions, `BitmapCaves` / `RandomMaterials`, vegetation extras of the chunk generator `0x73b040`.22. [ ] World streaming: chunk load/unload, world size, wrapping, edges.
 23. [ ] Rendering: backgrounds/parallax, sky, lighting, fog of war, emissive materials, glow, visibility-affecting
     post effects.
 24. [ ] Holy Mountains: shops, wand-edit altar, perk altar, stealing collapse, Steve.

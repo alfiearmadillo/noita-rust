@@ -16,6 +16,8 @@ pub struct Topology {
     pub wang_map_width: u32,
     pub wang_map_height: u32,
     pub lua_script: Option<String>,
+    /// `static_tile="1"`: the template is a fixed picture, not a herringbone tileset.
+    pub static_tile: bool,
 }
 
 #[derive(Debug)]
@@ -159,6 +161,7 @@ pub fn parse(xml: &str, resolve: impl Fn(&str) -> u32) -> Result<(Topology, Rule
         wang_map_width: num("wang_map_width"),
         wang_map_height: num("wang_map_height"),
         lua_script: topo.attr("lua_script").map(str::to_owned),
+        static_tile: topo.attr("static_tile").is_some_and(|v| v.trim() != "0"),
     };
     let rules = materials
         .children
