@@ -122,8 +122,9 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
     Done: the herringbone Wang tile generator and tileset builder (`worldgen::wang`, checked byte for byte against the
     exe in Ghidra's emulator), the world to Wang warp, the biome `<Materials>` rule list with its noise helpers
     (`worldgen::rules`), the Wang-biome material lookup `0x87d0e0` type 2 with its samplers (`worldgen::terrain`), the
-    biome XML reader and the image conversion `0x8704c0` (decompile only); all emulator-verified except the
-    conversion. `render_biome` draws a biome from a seed. Missing: the biome driver (region seeds, retries,
+    biome XML reader and the image conversion `0x8704c0`; all emulator-verified (conversion: spawn colors not
+    covered). `render_biome` draws a biome from a seed, and `NOITA_BIOME=coalmine` loads a generated slice in the
+    game (`worldgen::generate`). Missing: the biome driver (region seeds, retries,
     validity check `0x8771a0`), the biome map and region setup (`0x87a900`), procedural (type 0) biomes, pixel scenes,
     spawn functions, `BitmapCaves` / `RandomMaterials`, vegetation extras of the chunk generator `0x73b040`.
 22. [ ] World streaming: chunk load/unload, world size, wrapping, edges.

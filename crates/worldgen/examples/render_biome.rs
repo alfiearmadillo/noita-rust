@@ -2,7 +2,7 @@
 //! render_biome -- <biome> <seed> <chunks_w> <chunks_h> <out.png>` (for example `coalmine 12345 3 2`).
 //!
 //! The Wang map comes from the verified generator, the colors become material indices as
-//! `0x8704c0` does (decompile only, not emulator-checked), the lookup is the verified
+//! `0x8704c0` does (emulator-checked except spawn colors), the lookup is the verified
 //! `0x87d0e0` Wang branch. Spawn-function pixels, pixel scenes and structures are not placed.
 
 use std::collections::HashMap;

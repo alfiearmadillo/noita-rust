@@ -674,7 +674,8 @@ The per-chunk generator is `0x73b040` (one task per 512x512 chunk, started by `0
 cell with `0x7048c0`; spawn-function pixels are handled afterwards (`0x87d380`, a 10-pixel grid). `0x880860` / `0x880fb0`
 are the pixel-scene fill, not this. The lookup depends on the biome type (`+4`): 0 procedural, 1 image, 2 Wang tile.
 
-- **Region images** (`0x8704c0`, called by `0x879bf0` after generation; decompile only, not emulator-checked): for each
+- **Region images** (`0x8704c0`, called by `0x879bf0` after generation; `WangMap::from_wang_rgb`, 60 emulated cases match
+  including the neighbor fill; the spawn-function path is not covered): for each
   non-black pixel the color word is `0xAABBGGRR`. White (`0xffffff`) stores its gray; a color equal to a material's
   `wang_color` (`0x704f00`: air's color gives index 0, otherwise the first material from index 1 with that RGB) stores
   `index + 1` in the material image (`u16`) and a float of 1 (air color: -1); a color registered through

@@ -593,5 +593,66 @@ def material_at_golden():
     print(f"wrote {cases} cases")
 
 
+def convert_golden():
+    """The Wang region image conversion (0x8704c0): colors to float and material images."""
+    rng = random.Random(4242)
+    THIS, SRC, SDATA, FDATA, TAB = 0x50000000, 0x51000000, 0x51100000, 0x52000000, 0x30012000
+    BUMP, HEAP = 0x6FFF0000, 0x70000000
+    callback = 0x30011000
+    # color callback (cdecl, one argument): air color -> 0, else first table entry from 1, else -1
+    T = TAB
+    code = bytearray()
+    code += bytes.fromhex("8b442404" "25ffffff00")
+    code += b"\x8b\x15" + struct.pack("<I", T + 4) + bytes.fromhex("81e2ffffff00" "39d0" "7503" "31c0" "c3")
+    code += bytes.fromhex("b901000000")
+    code += b"\x3b\x0d" + struct.pack("<I", T) + bytes.fromhex("7d17")
+    code += b"\x8b\x14\x8d" + struct.pack("<I", T + 4) + bytes.fromhex("81e2ffffff00" "39d0" "7403" "41" "ebe4")
+    code += bytes.fromhex("89c8" "c3" "b8ffffffff" "c3")
+    malloc = bytes.fromhex("a1") + struct.pack("<I", BUMP) + bytes.fromhex("8b4c2404" "83c10f" "83e1f0" "010d") + struct.pack("<I", BUMP) + b"\xc3"
+    stubs = [
+        (0x30010000, malloc), (0xF074F0, struct.pack("<I", 0x30010000)), (0xF07500, struct.pack("<I", 0x30010000)),
+        (0x30010100, b"\xc3"), (0xF074F4, struct.pack("<I", 0x30010100)), (0xF07504, struct.pack("<I", 0x30010100)),
+        (0xF07318, struct.pack("<I", 0x30001000)),
+        (callback, bytes(code)),
+        (BUMP, struct.pack("<I", HEAP)),
+        (0, bytes(16)),  # fs:[0]
+    ]
+    # memset(dst, value, size) -> dst, preserving callee-saved registers (as in the wang harness)
+    memset = bytes.fromhex("57" "8b7c2408" "8a44240c" "8b4c2410" "f3aa" "8b442408" "5f" "c3")
+    stubs.append((0x30001000, memset))
+    pal = [(0, 0, 0x42), (255, 0, 0), (0, 255, 0), (0, 0, 255), (10, 200, 30), (200, 200, 0), (7, 7, 7)]
+    other = [(0x33, 0x66, 0x99), (0x10, 0x20, 0x30), (0xEE, 0xEE, 0xEE), (255, 255, 254), (1, 0, 0), (0, 0, 1), (0, 1, 0)]
+    rows = ["# 0x8704c0 run in Ghidra's emulator (crates/worldgen/tests/convert_golden.rs): table | pixels | floats | materials"]
+    word = lambda c: 0xFF000000 | c[2] << 16 | c[1] << 8 | c[0]
+    for case in range(60):
+        w, h = rng.randrange(2, 9), rng.randrange(2, 9)
+        table = rng.sample(pal, rng.randrange(2, len(pal) + 1))
+        pool = [(0, 0, 0), (255, 255, 255)] + table * 2 + other
+        pixels = [rng.choice(pool) for _ in range(w * h)]
+        mem = list(stubs) + [
+            (THIS, struct.pack("<IIIIIIII", w, h, w * h, 0, 0, 0, FDATA, w * h)),
+            (THIS + 0xB0, struct.pack("<II", callback, 0)),
+            (SRC, struct.pack("<IIIIIIII", w, h, w * h, 0, 0, 0, SDATA, w * h)),
+            (SDATA, b"".join(struct.pack("<I", word(c)) for c in pixels)),
+            (FDATA, bytes(4 * w * h)),
+            (TAB, struct.pack("<I", len(table)) + b"".join(struct.pack("<I", word(c)) for c in table)),
+        ]
+        out = emulate(0x8704C0, {"ECX": THIS}, args=[SRC, 0, 1, 0, 0, w, h], mem=mem, max_steps=100000,
+                      read=[(THIS, 0xC0), (FDATA, 4 * w * h), (HEAP, 0x4000)])
+        blocks = [bytes.fromhex(m["hex"]) for m in out["memory"]]
+        this, floats, heap = blocks
+        ptr16 = struct.unpack_from("<I", this, 0x38)[0]
+        if not HEAP <= ptr16 < HEAP + 0x4000 - 2 * w * h:
+            raise RuntimeError(f"unexpected Image16 pointer {ptr16:#x}")
+        m16 = struct.unpack_from(f"<{w * h}H", heap, ptr16 - HEAP)
+        fl = struct.unpack_from(f"<{w * h}I", floats)
+        rows.append(f"case {case} {w} {h} " + " ".join(f"{c[0]:02x}{c[1]:02x}{c[2]:02x}" for c in table) + " | "
+                    + " ".join(f"{c[0]:02x}{c[1]:02x}{c[2]:02x}" for c in pixels) + " | "
+                    + " ".join(f"{v:x}" for v in fl) + " | " + " ".join(map(str, m16)))
+    with open("crates/worldgen/tests/data/convert_golden.txt", "w", newline="\n") as fh:
+        fh.write("\n".join(rows) + "\n")
+    print(f"wrote {len(rows) - 1} cases")
+
+
 if __name__ == "__main__":
-    {"set_seed": set_seed, "random": random_golden, "noise": noise_golden, "noise2d": noise2d_golden, "warp": warp_golden, "wang": wang_golden, "simplex2d": simplex2d_golden, "rules": rules_golden, "terrain": terrain_golden, "material_at": material_at_golden}[sys.argv[1]]()
+    {"set_seed": set_seed, "random": random_golden, "noise": noise_golden, "noise2d": noise2d_golden, "warp": warp_golden, "wang": wang_golden, "simplex2d": simplex2d_golden, "rules": rules_golden, "terrain": terrain_golden, "material_at": material_at_golden, "convert": convert_golden}[sys.argv[1]]()
