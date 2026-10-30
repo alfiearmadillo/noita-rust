@@ -190,6 +190,28 @@ def noise2d_golden():
     print(f"wrote {len(rows) - 1} vectors to crates/sim/tests/data/noise2d_golden.csv")
 
 
+def simplex2d_golden():
+    import math
+
+    rng = random.Random(31)
+    rows = ["# x_bits,y_bits,result_bits: 0x872300 (f64 2D simplex) in Ghidra's emulator"]
+    # The skew constants are filled by static initializers (0x406fc0, 0x406ff0) in the real process.
+    consts = [
+        (0x1207BE0, struct.pack("<d", (math.sqrt(3.0) - 1.0) * 0.5)),
+        (0x1207CD0, struct.pack("<d", (3.0 - math.sqrt(3.0)) / 6.0)),
+    ]
+    cases = [(0.0, 0.0), (1.0, 1.0), (0.5, 0.5), (-1.5, 2.25), (255.0, 256.0), (-0.001, 0.001)]
+    for _ in range(400):
+        scale = rng.choice([0.5, 4.0, 40.0, 3000.0])
+        cases.append((rng.uniform(-scale, scale), rng.uniform(-scale, scale)))
+    for x, y in cases:
+        out = emulate(0x872300, {"XMM0": bits(x), "XMM1": bits(y)}, ret="XMM0", max_steps=100000, mem=consts)
+        rows.append(f"{bits(x):#018x},{bits(y):#018x},{low(out['registers']['XMM0'], 64):#018x}")
+    with open("crates/sim/tests/data/simplex2d_golden.csv", "w", newline="\n") as f:
+        f.write("\n".join(rows) + "\n")
+    print(f"wrote {len(rows) - 1} vectors to crates/sim/tests/data/simplex2d_golden.csv")
+
+
 TS_BASE = 0x50000000
 TLS_PAGE = 0x40000000
 OUT_BASE = 0x60000000
@@ -362,5 +384,101 @@ def warp_golden():
     print(f"wrote {len(rows) - 1} vectors to crates/worldgen/tests/data/warp_golden.csv")
 
 
+def rules_golden():
+    """Biome material rules: RuleList::pick (0x86d2a0), with its noise helpers, in the emulator."""
+    import math
+
+    rng = random.Random(404)
+    consts = [
+        (0x1207BE0, struct.pack("<d", (math.sqrt(3.0) - 1.0) * 0.5)),
+        (0x1207CD0, struct.pack("<d", (3.0 - math.sqrt(3.0)) / 6.0)),
+    ]
+    base, rules_at, poly_at = 0x50000000, 0x50001000, 0x50100000
+
+    def f(v):
+        return struct.pack("<f", v)
+
+    def make_rule(i):
+        r = {
+            "material": 100 + i,
+            "min": rf32(rng.uniform(-0.2, 0.7)),
+            "add_perlin": int(rng.random() < 0.3),
+            "sx": rf32(rng.uniform(0.001, 0.2)), "sy": rf32(rng.uniform(0.001, 0.2)),
+            "is_rare": int(rng.random() < 0.5),
+            "limit_y": int(rng.random() < 0.4),
+            "use_perlin": int(rng.random() < 0.4), "use_fbm": int(rng.random() < 0.5),
+            "use_polka": int(rng.random() < 0.6),
+            "rsx": rf32(rng.uniform(0.002, 0.4)), "rsy": rf32(rng.uniform(0.002, 0.4)),
+            "by_seed": int(rng.random() < 0.4),
+            "ox": rf32(rng.uniform(-50, 50)), "oy": rf32(rng.uniform(-50, 50)),
+            "prl": rf32(rng.uniform(0.05, 0.5)), "prh": rf32(rng.uniform(0.3, 0.95)),
+            "boxed": int(rng.random() < 0.5), "prob": rf32(rng.uniform(0.1, 0.95)),
+            "reqmin": rf32(rng.uniform(-0.4, 0.4)), "reqmax": rf32(rng.choice([0.4, 0.8, 10.0])),
+            "is_poly": int(rng.random() < 0.25),
+        }
+        r["max"] = rf32(r["min"] + rng.uniform(0.05, 0.9))
+        a = rng.uniform(-1500, 1500)
+        r["lmin"] = rf32(a)
+        r["lmax"] = rf32(a + rng.uniform(100, 4000))
+        npts = rng.randrange(3, 8)
+        cx, cy = rng.uniform(0.3, 0.7), rng.uniform(0.3, 0.7)
+        r["poly"] = [(rf32(cx + rng.uniform(-0.45, 0.45)), rf32(cy + rng.uniform(-0.45, 0.45))) for _ in range(npts)]
+        return r
+
+    def rule_bytes(r, poly_addr):
+        b = bytearray(0x84)
+        struct.pack_into("<I", b, 4, r["material"])
+        struct.pack_into("<ff", b, 0x24, r["min"], r["max"])
+        b[0x2C] = r["add_perlin"]
+        struct.pack_into("<ff", b, 0x30, r["sx"], r["sy"])
+        b[0x38], b[0x39] = r["is_rare"], r["limit_y"]
+        struct.pack_into("<ff", b, 0x3C, r["lmin"], r["lmax"])
+        b[0x44], b[0x45], b[0x46] = r["use_perlin"], r["use_fbm"], r["use_polka"]
+        struct.pack_into("<ff", b, 0x48, r["rsx"], r["rsy"])
+        b[0x50] = r["by_seed"]
+        struct.pack_into("<ff", b, 0x54, r["ox"], r["oy"])
+        struct.pack_into("<ff", b, 0x5C, r["prl"], r["prh"])
+        b[0x64] = r["boxed"]
+        struct.pack_into("<fff", b, 0x68, r["prob"], r["reqmin"], r["reqmax"])
+        b[0x74] = r["is_poly"]
+        n = len(r["poly"])
+        struct.pack_into("<II", b, 0x78, poly_addr, poly_addr + 8 * n)
+        return bytes(b)
+
+    out_lines = ["# lists and cases for RuleList::pick (0x86d2a0) run in Ghidra's emulator"]
+    cases = 0
+    for list_id in range(70):
+        lo, hi = rf32(rng.uniform(-0.3, 0.2)), rf32(rng.uniform(0.9, 1.6))
+        seed = rng.choice([0, 1, 12345, rng.randrange(-(2**31), 2**31), rng.randrange(0, 2**31)])
+        rules = [make_rule(i) for i in range(rng.randrange(1, 6))]
+        mem = list(consts)
+        for i, r in enumerate(rules):
+            pa = poly_at + i * 0x100
+            mem.append((rules_at + i * 0x84, rule_bytes(r, pa)))
+            mem.append((pa, b"".join(f(px) + f(py) for px, py in r["poly"])))
+        mem.append((base, f(lo) + f(hi) + struct.pack("<II", rules_at, rules_at + 0x84 * len(rules))))
+        mem.append((0x1205004, struct.pack("<i", seed)))
+        out_lines.append(f"list {list_id} {f32(lo):#010x} {f32(hi):#010x} {seed} {len(rules)}")
+        for r in rules:
+            flat = [r["material"], f32(r["min"]), f32(r["max"]), r["add_perlin"], f32(r["sx"]), f32(r["sy"]),
+                    r["is_rare"], r["limit_y"], f32(r["lmin"]), f32(r["lmax"]), r["use_perlin"], r["use_fbm"],
+                    r["use_polka"], f32(r["rsx"]), f32(r["rsy"]), r["by_seed"], f32(r["ox"]), f32(r["oy"]),
+                    f32(r["prl"]), f32(r["prh"]), r["boxed"], f32(r["prob"]), f32(r["reqmin"]), f32(r["reqmax"]),
+                    r["is_poly"], len(r["poly"])]
+            flat += [f32(c) for p in r["poly"] for c in p]
+            out_lines.append("rule " + " ".join(str(v) if isinstance(v, int) and v < 1000 else f"{v:#x}" for v in flat))
+        for _ in range(14):
+            x = rng.choice([rng.randrange(-30000, 30000), rng.randrange(-600, 600)])
+            y = rng.choice([rng.randrange(-5000, 40000), rng.randrange(-600, 3000)])
+            v = rf32(rng.uniform(-0.1, 1.3))
+            regs = {"ECX": base, "XMM3": f32(v), "XMM2": f32(v)}
+            res = emulate(0x86D2A0, regs, args=[x, y], mem=mem, max_steps=100000)
+            out_lines.append(f"case {x} {y} {f32(v):#010x} {low(res['registers']['EAX'], 32)}")
+            cases += 1
+    with open("crates/worldgen/tests/data/rules_golden.txt", "w", newline="\n") as fh:
+        fh.write("\n".join(out_lines) + "\n")
+    print(f"wrote {cases} cases")
+
+
 if __name__ == "__main__":
-    {"set_seed": set_seed, "random": random_golden, "noise": noise_golden, "noise2d": noise2d_golden, "warp": warp_golden, "wang": wang_golden}[sys.argv[1]]()
+    {"set_seed": set_seed, "random": random_golden, "noise": noise_golden, "noise2d": noise2d_golden, "warp": warp_golden, "wang": wang_golden, "simplex2d": simplex2d_golden, "rules": rules_golden}[sys.argv[1]]()

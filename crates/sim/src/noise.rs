@@ -118,6 +118,44 @@ pub fn simplex3(xin: f64, yin: f64, zin: f64) -> f64 {
     (n1 + n0 + n2 + n3) * 32.0
 }
 
+/// One corner of the 2D double-precision simplex: `(0.5 - |d|^2)^4 * dot(gradient, d)`.
+fn corner2(gradient: usize, x: f64, y: f64) -> f64 {
+    let t = 0.5 - x * x - y * y;
+    if t < 0.0 {
+        return 0.0;
+    }
+    let t = t * t;
+    let g = GRAD3[gradient];
+    (g[1] * y + g[0] * x) * (t * t)
+}
+
+/// Double-precision 2D simplex noise (`0x872300`), scaled by 70. The skew constants come from
+/// the static initializers `0x406fc0` and `0x406ff0`.
+pub fn simplex2d(xin: f64, yin: f64) -> f64 {
+    let sqrt3 = 3.0_f64.sqrt();
+    let f2 = (sqrt3 - 1.0) * 0.5;
+    let g2 = (3.0 - sqrt3) / 6.0;
+    let s = (xin + yin) * f2;
+    let i = floor(xin + s);
+    let j = floor(yin + s);
+    let t = f64::from(i + j) * g2;
+    let x0 = xin - (f64::from(i) - t);
+    let y0 = yin - (f64::from(j) - t);
+    let (i1, j1) = if x0 > y0 { (1u8, 0u8) } else { (0, 1) };
+    let x1 = x0 - f64::from(i1) + g2;
+    let y1 = y0 - f64::from(j1) + g2;
+    let x2 = x0 - 1.0 + g2 * 2.0;
+    let y2 = y0 - 1.0 + g2 * 2.0;
+    let (ii, jj) = ((i & 255) as usize, (j & 255) as usize);
+    let g0 = perm_mod12(ii + perm(jj));
+    let g1 = perm_mod12(ii + usize::from(i1) + perm(jj + usize::from(j1)));
+    let g2i = perm_mod12(ii + 1 + perm(jj + 1));
+    let n0 = corner2(g0, x0, y0);
+    let n1 = corner2(g1, x1, y1);
+    let n2 = corner2(g2i, x2, y2);
+    (n1 + n0 + n2) * 70.0
+}
+
 /// `0xFDFFE0`: the second permutation, used by the 2D value and gradient noise.
 const P2: [u8; 256] = [
     23, 125, 161, 52, 103, 117, 70, 37, 247, 101, 203, 169, 124, 126, 44, 123, 152, 238, 145, 45,
