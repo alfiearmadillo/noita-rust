@@ -5,6 +5,7 @@ writes golden vectors for the Rust ports. Needs scripts/ghidra-server.ps1 runnin
 """
 
 import json
+import os
 import random
 import struct
 import sys
@@ -189,6 +190,156 @@ def noise2d_golden():
     print(f"wrote {len(rows) - 1} vectors to crates/sim/tests/data/noise2d_golden.csv")
 
 
+TS_BASE = 0x50000000
+TLS_PAGE = 0x40000000
+OUT_BASE = 0x60000000
+
+
+def tile_pixel(tile_index, x, y, width):
+    # The golden files carry no game art: tiles are filled with a pattern derived from their index.
+    return bytes([tile_index & 255, (tile_index >> 8) & 255, (y * width + x) & 255])
+
+
+def enumerate_tiles(is_corner, nc, vx, vy):
+    """The tile slots of stbhw__process_template in order: (h tiles, v tiles) as [a..f] lists."""
+
+    def rows(ranges, variants):
+        out = []
+        for _ in range(variants):
+            for f in ranges[5]:
+                for e in ranges[4]:
+                    for d in ranges[3]:
+                        for c in ranges[2]:
+                            for b in ranges[1]:
+                                for a in ranges[0]:
+                                    out.append([a, b, c, d, e, f])
+        return out
+
+    al = lambda n: range(n)
+    one = lambda v: range(v, v + 1)
+    h, v = [], []
+    if is_corner:
+        for k in range(nc[2]):
+            for j in range(nc[1]):
+                for i in range(nc[0]):
+                    for _ in range(vy):
+                        h += rows([al(nc[1]), al(nc[2]), al(nc[3]), one(i), one(j), one(k)], vx)
+        for k in range(nc[3]):
+            for j in range(nc[0]):
+                for i in range(nc[1]):
+                    for _ in range(vx):
+                        v += rows([al(nc[0]), al(nc[3]), al(nc[2]), one(i), one(j), one(k)], vy)
+    else:
+        for k in range(nc[3]):
+            for j in range(nc[4]):
+                for i in range(nc[2]):
+                    for _ in range(vy):
+                        h += rows([al(nc[2]), one(k), al(nc[1]), one(j), al(nc[0]), one(i)], vx)
+        for k in range(nc[3]):
+            for j in range(nc[4]):
+                for i in range(nc[5]):
+                    for _ in range(vx):
+                        v += rows([al(nc[0]), one(i), al(nc[1]), one(j), al(nc[5]), one(k)], vy)
+    return h, v
+
+
+def wang_run(ts, seed, w, h):
+    """Runs stbhw_generate_image (0x866b90) in the emulator on a tileset built in emulator memory."""
+    is_corner, nc, side, htiles, vtiles = ts
+    mem = []
+    # tiles: 6 color bytes then pixels, laid out one after another
+    tile_addr = 0x53000000
+    h_ptrs, v_ptrs = [], []
+    blob = bytearray()
+    for idx, (lst, ptrs, tw, th) in enumerate(((htiles, h_ptrs, 2 * side, side), (vtiles, v_ptrs, side, 2 * side))):
+        for n, colors in enumerate(lst):
+            gi = n if lst is htiles else len(htiles) + n
+            ptrs.append(tile_addr + len(blob))
+            blob += bytes(c & 255 for c in colors)
+            for y in range(th):
+                for x in range(tw):
+                    blob += tile_pixel(gi, x, y, tw)
+    mem.append((tile_addr, bytes(blob)))
+    mem.append((0x51000000, b"".join(struct.pack("<I", p) for p in h_ptrs)))
+    mem.append((0x52000000, b"".join(struct.pack("<I", p) for p in v_ptrs)))
+    header = struct.pack("<I6iIIIIIII", is_corner, *nc, side, 0x51000000, 0x52000000, len(htiles), len(htiles), len(vtiles), len(vtiles))
+    mem.append((TS_BASE, header))
+    # fs:[0x2c] -> [TLS_PAGE] -> S; [S+0x14] -> the Random object holding the double state
+    state = from_seed_state(seed)
+    S, R = TLS_PAGE + 0x1000, TLS_PAGE + 0x2000
+    mem.append((0x2C, struct.pack("<I", TLS_PAGE)))
+    mem.append((TLS_PAGE, struct.pack("<I", S)))
+    mem.append((S + 0x14, struct.pack("<I", R)))
+    mem.append((R, struct.pack("<d", float(state))))
+    # memset is a DLL import (thunk 0xdfe27e, IAT 0xf07318); this stub keeps EDI and returns the destination.
+    memset = bytes.fromhex("57" "8b7c2408" "0fb64424 0c" "69c001010101" "8b4c2410" "89ca" "c1e902" "f3ab" "89d1" "83e103" "f3aa" "8b442408" "5f" "c3")
+    mem.append((0x30001000, memset))
+    mem.append((0xF07318, struct.pack("<I", 0x30001000)))
+    out = emulate(0x866B90, {"ECX": TS_BASE}, args=[OUT_BASE, w * 3, w, h], read=[(OUT_BASE, w * h * 3)], mem=mem, max_steps=100000)
+    return int(out["registers"]["EAX"], 16) & 0xFFFFFFFF, bytes.fromhex(out["memory"][0]["hex"])
+
+
+def from_seed_state(seed):
+    """Random::Random(double) (0x44d070): the seed (halved once past 2^31-1), then one step."""
+    s = seed * 0.5 if seed >= 2147483647.0 else seed
+    s = int(s)
+    q = int(s / 127773)
+    v = (s * 16807 - q * 2147483647) & 0xFFFFFFFF
+    v = v - (1 << 32) if v >= 1 << 31 else v
+    return v if v >= 1 else v + 2147483647
+
+
+def wang_golden():
+    import subprocess
+    import tempfile
+
+    rng = random.Random(3)
+    tilesets = []
+    for name in ("endgame", "water", "the_sky", "town_under", "tutorial", "sandcave"):
+        path = os.path.join(tempfile.gettempdir(), "gh", f"wangdump_{name}.png.txt")
+        lines = open(path).read().split("\n")
+        head = [int(t) for t in lines[0].split()]
+        colors = [[int(t) for t in l.split()] for l in lines[1 : 1 + head[8] + head[9]]]
+        tilesets.append((name, (head[0], head[1:7], head[7], colors[: head[8]], colors[head[8] :])))
+    for name, is_corner, nc, vx, vy in (
+        ("edge_a", 0, [2, 1, 1, 1, 1, 1], 1, 1),
+        ("edge_b", 0, [2, 2, 1, 2, 1, 1], 1, 1),
+        ("edge_c", 0, [1, 1, 2, 1, 1, 2], 1, 1),
+        ("corner_s", 1, [1, 2, 1, 2, 0, 0], 1, 1),
+    ):
+        h, v = enumerate_tiles(is_corner, nc, vx, vy)
+        tilesets.append((name, (is_corner, nc, 4, h, v)))
+    lines = ["# tileset <name> <corner> <nc0..nc5> <side> <nh> <nv> then one line of colors per tile; case <name> <seed bits> <w> <h> <ok> <hex>"]
+    cases = 0
+    for name, ts in tilesets:
+        is_corner, nc, side, ht, vt = ts
+        lines.append(f"tileset {name} {is_corner} {' '.join(map(str, nc))} {side} {len(ht)} {len(vt)}")
+        lines += [" ".join(map(str, c)) for c in ht + vt]
+        for attempt in range(3):
+            seed = float(rng.randrange(1, 2**32))
+            w, h = side * rng.randrange(3, 6) + rng.randrange(0, side), side * rng.randrange(2, 5) + rng.randrange(0, side)
+            result = None
+            while result is None:
+                try:
+                    result = wang_run(ts, seed, w, h)
+                except RuntimeError as ex:
+                    if "max_steps" not in str(ex):
+                        raise
+                    if w <= side * 2 and h <= side * 2:
+                        break
+                    w, h = max(side * 2, w - side), max(side * 2, h - side)
+            if result is None:
+                print(f"{name}: too slow even at the smallest size")
+                continue
+            ok, data = result
+            lines.append(f"case {name} {bits(seed):#018x} {w} {h} {ok} {data.hex()}")
+            cases += 1
+    os.makedirs("crates/worldgen/tests/data", exist_ok=True)
+    with open("crates/worldgen/tests/data/wang_golden.txt", "w", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"wrote {cases} cases")
+
+
 def warp_golden():
     rng = random.Random(11)
     rows = ["# off_x_bits,off_y_bits,strength_bits,x_bits,y_bits,u_bits,v_bits: world_to_wang (0x87ce50) in Ghidra's emulator"]
@@ -212,4 +363,4 @@ def warp_golden():
 
 
 if __name__ == "__main__":
-    {"set_seed": set_seed, "random": random_golden, "noise": noise_golden, "noise2d": noise2d_golden, "warp": warp_golden}[sys.argv[1]]()
+    {"set_seed": set_seed, "random": random_golden, "noise": noise_golden, "noise2d": noise2d_golden, "warp": warp_golden, "wang": wang_golden}[sys.argv[1]]()

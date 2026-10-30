@@ -646,7 +646,10 @@ limit is 100x100 tiles (`"increase STB_HBWANG_MAX_X/Y"`, string `0xfea8c0`).
   == 0xC0` means corner type (`num_color[4]`, `vary_x`, `vary_y`, `short_side_len` at 0..6), otherwise edge type (6 colors,
   then `vary_x`, `vary_y`, `short_side_len`). Tiles are `2n x n` and `n x 2n` blocks inside a 1-pixel border, pitch `n + 3`.
   Images are loaded as RGB (3 channels). All 31 corner and 2 edge templates in `data/wang_tiles` parse (coalmine: corner,
-  colors 1/2/1/2, side 13, 72+72 tiles).
+  colors 1/2/1/2, side 13, 72+72 tiles). `Tileset::generate` is checked byte for byte against `stbhw_generate_image`
+  running in the emulator (`crates/worldgen/tests/wang_golden.rs`, 30 cases: six real templates' constraint structure
+  plus synthetic edge and corner sets; tiles carry index patterns so no game art is stored; the thread-local RNG and the
+  `memset` import are supplied through emulator memory).
 - **Biome wrapper** (`0x867770`, `0x867500`): builds the tileset, seeds, generates `height + 4` rows and discards the first
   four rows; pixels are stored as ARGB with alpha 255 into the biome image. The biome driver (`0x879bf0`) retries up to
   100 times with a new seed drawn from its own Park-Miller chain (biome seed `+0x4C`) until the validity check `0x8771a0`
