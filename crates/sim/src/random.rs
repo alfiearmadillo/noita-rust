@@ -12,7 +12,7 @@
 //! `RandomDistributionf` (`0x7ca460`), `ProceduralRandom` (`0x7ca810`), `ProceduralRandomf`
 //! (`0x7caec0`) and `ProceduralRandomi` (`0x7cb550`).
 //!
-//! `set_seed` is derived from the disassembly and has not been compared with a live game.
+//! Checked against the exe by `tests/{set_seed,random}_golden.rs` (vectors from Ghidra's emulator).
 
 const SCALE: f64 = 4.656_612_875e-10;
 const MODULUS: i32 = 0x7FFF_FFFF;
@@ -41,7 +41,7 @@ fn dtol_low(v: f64) -> u32 {
 }
 
 /// Bob Jenkins' 96-bit mix (lookup2), returning `c` (`0x8720c0`).
-fn mix(mut a: u32, mut b: u32, mut c: u32) -> u32 {
+pub fn mix(mut a: u32, mut b: u32, mut c: u32) -> u32 {
     a = a.wrapping_sub(b).wrapping_sub(c) ^ (c >> 13);
     b = b.wrapping_sub(c).wrapping_sub(a) ^ (a << 8);
     c = c.wrapping_sub(a).wrapping_sub(b) ^ (b >> 13);

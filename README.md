@@ -615,8 +615,12 @@ as the Sampo orb `Random(0, 999) == 999` in `0x78e640`).
   `(float)pow((float)sin((0.5 - m + x) * 3.1415), sharpness) >= r`; after 100 rejections one more draw is returned.
   The int variant returns `roundf(x * span) + min`, the float variant `x * span + min`. Defaults: sharpness 1,
   baseline 0.005.
-- `set_seed` is derived from the disassembly and not yet compared against a running game; the world-seed generator
-  (`0x883540`, time-seeded) and the entity-side users of these draws are not ported.
+- Verified against the exe: `scripts/emulate_golden.py` runs the reference functions in Ghidra's emulator
+  (GhidraMCP `/emulate_function`) and `crates/sim/tests/{set_seed,random}_golden.rs` replay 868 recorded vectors
+  (`SetRandomSeed`, `Next`, `NextF`, `Next(min, max)`, the double constructor, the Jenkins mix, the sampler loop and
+  `RandomDistributionf`). Not covered: the sampler's `sin`/`pow` (DLL imports the emulator cannot run), seeds that overflow
+  `cvttsd2si` (the emulator converts those differently from hardware) and CRT double-to-int64 beyond about 6.8e10.
+  The world-seed generator (`0x883540`, time-seeded) and the entity-side users of these draws are not ported.
 
 ### Recovered rules: Wang tile maps (ported in `crates/worldgen`, `worldgen::wang`)
 

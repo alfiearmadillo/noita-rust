@@ -87,7 +87,7 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
     (most need component systems).
 11. [~] RNG: world seed, `SetRandomSeed(x, y)` and every RNG path (needed for identical wands, spells, biomes,
     secrets). Done: the `Random` class, `SetRandomSeed`, `Random*`, `ProceduralRandom*`, `RandomDistribution*`
-    (`sim::random`, unverified against a live game). Missing: world-seed generation, wiring into the Lua runtime and
+    (`sim::random`, checked against the exe in Ghidra's emulator). Missing: world-seed generation, wiring into the Lua runtime and
     the entity-side RNG users.
 12. [ ] Messages/events: damage, death, collision, pickup.
 
