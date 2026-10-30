@@ -16,6 +16,12 @@ pub mod world;
 
 use std::collections::HashMap;
 
+/// Parses a game XML file with the forgiving reader (comments inside tags, repeated attributes,
+/// `--` inside comments).
+pub fn parse_xml(text: &str) -> Result<Node, String> {
+    xml::parse(text)
+}
+
 /// A parsed element: tag, attributes in document order, children.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Node {

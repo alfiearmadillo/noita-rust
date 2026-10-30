@@ -6140,6 +6140,7 @@ dependencies = [
 name = "worldgen"
 version = "0.0.0"
 dependencies = [
+ "entity",
  "noita_data",
  "png",
  "sim",

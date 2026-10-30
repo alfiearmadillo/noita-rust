@@ -661,8 +661,48 @@ limit is 100x100 tiles (`"increase STB_HBWANG_MAX_X/Y"`, string `0xfea8c0`).
   0.1`, `u' = floor(u) + frac(u) + value2(X/9, Y/9) * k * s`, `v' = floor(v) + frac(v) + perlin2(Y/9, X/9) * ((1 - k) *
   0.33 + 0.111) * s`. Matches 500 emulated vectors (the `floor` DLL import is replaced by an integer stub written into the
   emulator's memory and the IAT slot).
-- Not ported: the biome driver chain (seeds, retries, validity check), the color to material / spawn mapping (`0x87a900`),
-  the biome map, pixel scenes, background layers.
+- Not ported: the biome driver chain (seeds, retries, validity check `0x8771a0`), the spawn-function pass and the biome
+  map (`0x87a900`), pixel scenes, background layers, `BitmapCaves` / `RandomMaterials`, procedural biomes (type 0).
+
+### Recovered rules: Wang biome terrain (ported in `crates/worldgen`, `terrain`, `rules`, `biome`)
+
+The per-chunk generator is `0x73b040` (one task per 512x512 chunk, started by `0x9a4f50`): for every pixel it asks
+`GetMaterialAtPos` (`0x87d0e0`, `ecx` = world context, `xmm1` = x, `xmm2` = y as doubles) for a material and creates the
+cell with `0x7048c0`; spawn-function pixels are handled afterwards (`0x87d380`, a 10-pixel grid). `0x880860` / `0x880fb0`
+are the pixel-scene fill, not this. The lookup depends on the biome type (`+4`): 0 procedural, 1 image, 2 Wang tile.
+
+- **Region images** (`0x8704c0`, called by `0x879bf0` after generation; decompile only, not emulator-checked): for each
+  non-black pixel the color word is `0xAABBGGRR`. White (`0xffffff`) stores its gray; a color equal to a material's
+  `wang_color` (`0x704f00`: air's color gives index 0, otherwise the first material from index 1 with that RGB) stores
+  `index + 1` in the material image (`u16`) and a float of 1 (air color: -1); a color registered through
+  `RegisterSpawnFunction` (ABGR in the Lua file) stores `function index + 1` in a `u8` image and leaves the float at 0;
+  anything else stores the gray `((g/255) + 2 (b/255)) / 3`. Black stays 0. Pixels with no material and float 0 then take
+  the majority material of their left, right, upper and lower neighbours (`0x92a260`, the first value to reach the top
+  count; the image wraps). Image getters (`0x92a1d0` etc.) wrap both axes and read 0 for an empty image.
+- **Type 2 lookup** (`0x87d0e0`; `worldgen::terrain::WangBiome::material_at`, 960 emulated vectors match): `(u, v)` =
+  `world_to_wang` with strength 0; `idx` = `round_index(u, v)` (`0x8712d0`: floor, then round up when `(3 - 2f) f^2 >= 0.5` per
+  axis, material image value - 1). With `idx > 0` the material's `wang_noise_percent` (`CellData +0x234`, default 1),
+  `wang_curvature` (`+0x238`, default 0.5) and `wang_noise_type` (`+0x23c`, default 0; loader `0x6fa4e0`) apply: `(u, v)`
+  is recomputed with strength `wang_noise_percent` and the float image is sampled by type 0 `smooth` (`0x870e60`, bilinear
+  with smoothstep weights), 1 `edge_mode1` (`0x871160`) or 2 `edge_mode2` (`0x870f80`); without a material strength is 1,
+  threshold 0.5 and `smooth`. A value below the threshold is air. Otherwise `round_index` at the final `(u, v)`
+  decides; if that is positive its material is the result; else the biome's rule list is asked with `x`, `y` rounded
+  (`round`) and the value `terrain_value` (`0x87d010`: value2/simplex2 blend, at least 0.5).
+- **Rule list** (`0x86d2a0`, `worldgen::rules`, 980 emulated cases): the biome's `<Materials>` children are
+  `MaterialComponent`s (0x84 bytes, serializer `0x77c680`; constructor defaults: `material_min = material_max = 0.1`,
+  `limit_min/max_y = 100 / 2048`, `rare_use_polka = 1`, `rare_scale = 0.05`, polka radius `0.2..0.65`, boxed, probability
+  `0.2`, `rare_required 0.2..1`). The list's window `[lo, hi]` is the min `material_min` and max `material_max` over rules
+  with a resolved material (`0x86f4f0`); a value outside it picks nothing. For each rule in order: the y window
+  (`limit_y`), the polygon test (position inside the 512 tile, `0xddc9a0`), `add_perlin` (adds `simplex2d(x sx, y sy)` to
+  the value), the `[material_min, material_max)` window, then for rare rules the rare test: position scaled and offset
+  (optionally by the world seed), `rare_use_perlin` (`simplex2d`, or the 4-octave `fbm` `0x9296d0` with
+  `rare_use_fbm_perlin`) and `rare_use_polka` (`0x872140`, hashes `0x86fd40` / `0x86fe30`) must each land in
+  `(rare_required_min, rare_required_max]`.
+- **Noise**: `sim::noise::simplex2d` (`0x872300`, f64, 406 emulated vectors) joins `simplex3`, `simplex2`, `perlin2`,
+  `value2`.
+- `crates/worldgen/examples/render_biome.rs` renders a biome's materials from a seed (`render_biome coalmine 12345 3 2
+  out.png`); the Coal Mines output shows horizontal caves with wood/rock structures, water, oil and acid pools. Structures,
+  spawn functions, pixel scenes, `BitmapCaves` and the validity retry are not placed.
 
 ### Recovered rules: Lua runtime and wand engine (ported in `crates/script`)
 
