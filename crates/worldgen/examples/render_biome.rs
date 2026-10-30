@@ -1,5 +1,5 @@
 //! Renders a biome's terrain from the Wang template: `cargo run -p worldgen --release --example
-//! render_biome -- <biome> <seed> <chunks_w> <chunks_h> <out.png>` (for example `coalmine 12345 3 2`).
+//! render_biome -- <biome> <seed> <width> <height> <out.png>` (for example `coalmine 12345 1536 1024`).
 //!
 //! The Wang map comes from the verified generator, the colors become material indices as
 //! `0x8704c0` does (emulator-checked except spawn colors), the lookup is the verified
@@ -13,19 +13,18 @@ use worldgen::generate::{generate_biome, load_materials};
 fn main() {
     let mut args = std::env::args().skip(1);
     let biome = args.next().unwrap_or_else(|| "coalmine".into());
-    let seed: f64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(12345.0);
-    let cw: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(3);
-    let ch: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(2);
+    let seed: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(12345);
+    let cw: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(1536);
+    let ch: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(1024);
     let out = args.next().unwrap_or_else(|| "biome.png".into());
     let files = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../noita_files");
 
     let defs = load_materials(&files).expect("materials");
-    let (pw, ph) = (cw * 512, ch * 512);
-    let area =
-        generate_biome(&files, &defs, &biome, seed, (0, 0), (pw, ph), (cw, ch)).expect("generate");
+    let (pw, ph) = (cw, ch);
+    let area = generate_biome(&files, &defs, &biome, seed, (0, 0), (pw, ph)).expect("generate");
     println!(
-        "{biome}: {pw}x{ph} pixels, {} spawn-function pixels",
-        area.spawn_pixels
+        "{biome}: {pw}x{ph} pixels at world {:?}, {} spawn-function pixels",
+        area.origin, area.spawn_pixels
     );
 
     let mut counts: HashMap<u16, usize> = HashMap::new();

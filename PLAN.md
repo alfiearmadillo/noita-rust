@@ -39,53 +39,6 @@ Do not assume undocumented seed behavior or determinism. If the reference can be
 
 Keep a fidelity matrix with columns for observation, implementation status, test coverage, difference from reference, and confidence. Prioritize core interaction fidelity before broad content coverage.
 
-## Executable Analysis Workflow (Ghidra)
-
-The primary tool for reading `noita.exe` is Ghidra with the GhidraMCP plugin, running headless (no window) and
-queried over HTTP. It replaces reading raw disassembly with `re_tools disasm`: decompiled pseudocode is far shorter,
-shows control flow directly, and keeps analysis results in one database.
-
-**What is set up**
-
-- Ghidra 12.1.4 (`C:\Users\alfie\Documents\ghidra\ghidra_12.1.4_PUBLIC_20260921\ghidra_12.1.4_PUBLIC`), JDK 21, and
-  GhidraMCP 7.0.0 (`C:\Users\alfie\Documents\ghidra\ghidraMCP\ghidra-mcp`).
-- Project `noita_files/ghidra/noita.gpr` (git-ignored) containing `/noita.exe`, the repository copy of the executable
-  (x86 32-bit, image base `0x00400000`, about 88,700 functions), fully auto-analyzed. Never analyze the Steam install.
-- `scripts/ghidra-server.ps1` starts the headless server on `http://127.0.0.1:8089` with that program loaded. It is
-  idempotent (reports "Already running" if up), `-Stop` stops it, and logs go to `noita_files/ghidra/server.log`.
-  The VS Code task "Ghidra MCP: start headless server" (`.vscode/tasks.json`) runs it when the folder opens.
-- The Ghidra GUI and the headless server cannot hold the project at the same time; stop the server before opening
-  the GUI, and close the GUI before starting the server.
-- `.vscode/mcp.json` registers the MCP bridge, but VS Code does not currently detect it; use HTTP directly.
-
-**How to use it**
-
-1. Check the server: `Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8089/list_open_programs` must list
-   `noita.exe`; otherwise run `scripts/ghidra-server.ps1`.
-2. Decompile with `GET /get_functions?function=0x709fc0&fields=decompiled_code` (also `signature`, `callers`,
-   `callees`, `xrefs`; `functions=` takes up to 20 comma-separated addresses). Request only the fields needed, save
-   the response to a file under `$env:TEMP`, and read that file rather than echoing large JSON to the terminal.
-3. Navigate with `GET /get_xrefs_to?address=`, `GET /search_strings?search_term=`, `GET /find_functions?name_pattern=`,
-   `GET /get_function_call_graph`, and `GET /read_memory`. `GET /mcp/schema` lists all 191 endpoints and parameters.
-4. Confirm exact details before porting. The decompiler output is a hypothesis: verify float constants, the order
-   of RNG draws, signedness, and branch conditions that affect parity against the disassembly
-   (`get_functions` with `include_disasm=true`, or `re_tools disasm`).
-5. Record what was learned in Ghidra so later decompiles read better: `POST /rename_function` (old_name, new_name),
-   `POST /set_comment` (address, comment), `POST /create_struct` for recovered layouts such as `CellData`, then
-   `GET /save_program`. Use the README's names (e.g. `CFireCell::Update` for `0x709fc0`). The Ghidra database is not
-   in git, so the README remains the durable record of recovered rules and addresses.
-6. For small self-contained helpers (color darkening `0x70e760`, `Random` `0x4abc70`, position hash `0x70acc0`),
-   `POST /emulate_function` (function, registers, memory) can run the original code to produce golden test values.
-
-`re_tools` remains useful for RTTI vtable dumps, string cross-references, and quick byte or constant reads.
-
-To rebuild the project from scratch (takes several minutes):
-
-```powershell
-& 'C:\Users\alfie\Documents\ghidra\ghidra_12.1.4_PUBLIC_20260921\ghidra_12.1.4_PUBLIC\support\analyzeHeadless.bat' `
-  "$PWD\noita_files\ghidra" noita -import "$PWD\noita_files\install\noita.exe" -analysisTimeoutPerFile 10800
-```
-
 ## First Comparable Slice
 
 Build a fixed camera test cave and implement a player controller plus a small set of observed materials and one wand. Start with a minimal test scene that can answer: does the player move and collide similarly; does a falling material move and settle similarly; does liquid spread consistently; and does one spell alter terrain and actors in the same observable way?

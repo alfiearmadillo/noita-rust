@@ -253,22 +253,20 @@ fn build_world(p: &Palette) -> World {
         return test_scene(p);
     };
     let biome = biome.to_string_lossy().into_owned();
-    let seed: f64 = std::env::var("NOITA_SEED")
+    let seed: u32 = std::env::var("NOITA_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(12345.0);
+        .unwrap_or(12345);
     let mut world = World::new(WIDTH_CHUNKS, HEIGHT_CHUNKS, CHUNK_SIZE, p.table.clone(), 1);
     let (w, h) = (world.width() as usize, world.height() as usize);
-    // A window well inside the 3x3 chunk Wang map.
-    let origin = (400, 300);
+    // Start a little inside the first biome map chunk that shows the biome.
     match worldgen::generate::generate_biome(
         &noita_files(),
         &p.defs,
         &biome,
         seed,
-        origin,
+        (64, 64),
         (w, h),
-        (3, 3),
     ) {
         Ok(area) => {
             for (i, &m) in area.materials.iter().enumerate() {

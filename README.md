@@ -61,7 +61,7 @@ cargo run -p sim --example tick_timing                  # debug tick timing
 cargo run -p sim --example tick_timing --release        # release tick timing
 cargo run -p game                                       # Bevy sandbox window (needs extracted noita_files)
 $env:NOITA_BIOME="coalmine"; cargo run -p game          # same, with a generated Coal Mines slice (NOITA_SEED=..)
-cargo run -p worldgen --release --example render_biome -- coalmine 12345 3 2 out.png   # biome terrain PNG
+cargo run -p worldgen --release --example render_biome -- coalmine 12345 1536 1024 out.png   # biome terrain PNG
 python scripts/emulate_golden.py wang|warp|rules|terrain|material_at|simplex2d   # regenerate emulator golden data
 cargo test -p sim                                       # sim only (fast; no Bevy build)
 cargo run -p re_tools --release -- vtable noita_files\install\noita.exe ".?AVCLiquidCell@grid@@"
@@ -654,10 +654,12 @@ limit is 100x100 tiles (`"increase STB_HBWANG_MAX_X/Y"`, string `0xfea8c0`).
   plus synthetic edge and corner sets; tiles carry index patterns so no game art is stored; the thread-local RNG and the
   `memset` import are supplied through emulator memory).
 - **Biome wrapper** (`0x867770`, `0x867500`): builds the tileset, seeds, generates `height + 4` rows and discards the first
-  four rows; pixels are stored as ARGB with alpha 255 into the biome image. The biome driver (`0x879bf0`) retries up to
-  100 times with a new seed drawn from its own Park-Miller chain (biome seed `+0x4C`) until the validity check `0x8771a0`
-  accepts it; then every non-black pixel looks up its color in a spawn-function table (`FUN_00876aa0`) with a draw per
-  pixel.
+  four rows; pixels are stored as ARGB with alpha 255 into the biome image. The biome driver (`0x879bf0`) builds *region*
+  images this way (retrying up to 100 times with seeds from a Park-Miller chain started at the region seed, world seed +
+  new game plus count, advanced `width % 11 + seed % 12` steps, until the validity check `0x8771a0` accepts; it only runs
+  for regions at most 205 Wang pixels tall) and then looks every non-black pixel up in a spawn-function table
+  (`FUN_00876aa0`); what consumes those region images is not identified. The terrain lookup samples a different map (next
+  section).
 - **World to Wang coordinates** (`0x87ce50`, `worldgen::warp`): one Wang pixel is 10x10 world pixels. With `X = offset_x +
   x`, `Y = offset_y + y` (globals `0x1206fb0` random in +-100000, `0x12051b0` = 7168), `u = (X + 0.5) * 0.1`, `v = (Y + 0.5) *
   0.1` (single precision). With a positive strength the lookup is displaced: `k = simplex2(X * 0.13715, Y * 0.13717) * 0.45 +
@@ -673,6 +675,17 @@ The per-chunk generator is `0x73b040` (one task per 512x512 chunk, started by `0
 `GetMaterialAtPos` (`0x87d0e0`, `ecx` = world context, `xmm1` = x, `xmm2` = y as doubles) for a material and creates the
 cell with `0x7048c0`; spawn-function pixels are handled afterwards (`0x87d380`, a 10-pixel grid). `0x880860` / `0x880fb0`
 are the pixel-scene fill, not this. The lookup depends on the biome type (`+4`): 0 procedural, 1 image, 2 Wang tile.
+
+- **The biome's own map** (`+0x1d4` of the biome object): `ProceduralTerrain::Init` (`0x87a900`) loads the entries of
+  `_biomes_all.xml` in order (`0x86b9f0`); for every Wang biome it generates a `wang_map_width` x `wang_map_height` map
+  (`0x867de0` -> `0x867500`) with seed 0.0, which continues the thread's generator instead of reseeding it. That generator
+  starts as `Random(world seed)` (`0x1207018` is set from the world seed at the top of `Init`), so each biome's map depends
+  on every Wang entry loaded before it. The lookup wraps over this map (period `wang_map_width * 10` pixels). The stream
+  order follows the decompile and is not checked against the running game. `Init` also derives the Wang offset: a
+  `Random(world seed)` stepped three times, the third draw `(f32)(u * 200000) - 100000` is `offset_x` (`worldgen::generate::
+  wang_offset`; `offset_y` = 7168); the biome map (`data/biome_impl/biome_map.png`, one pixel per chunk, colors from the
+  `color` of each `<Biome>` entry) is indexed with world position + offset, and regions are 4-connected same-color
+  components (`0x92a970`, a BFS returning their bounding box).
 
 - **Region images** (`0x8704c0`, called by `0x879bf0` after generation; `WangMap::from_wang_rgb`, 60 emulated cases match
   including the neighbor fill; the spawn-function path is not covered): for each
@@ -704,9 +717,10 @@ are the pixel-scene fill, not this. The lookup depends on the biome type (`+4`):
   `(rare_required_min, rare_required_max]`.
 - **Noise**: `sim::noise::simplex2d` (`0x872300`, f64, 406 emulated vectors) joins `simplex3`, `simplex2`, `perlin2`,
   `value2`.
-- `crates/worldgen/examples/render_biome.rs` renders a biome's materials from a seed (`render_biome coalmine 12345 3 2
-  out.png`); the Coal Mines output shows horizontal caves with wood/rock structures, water, oil and acid pools. Structures,
-  spawn functions, pixel scenes, `BitmapCaves` and the validity retry are not placed.
+- `crates/worldgen/examples/render_biome.rs` renders a biome's materials from a world seed (`render_biome coalmine 12345
+  1536 1024 out.png`), placed at the first biome map chunk that shows the biome; the Coal Mines output shows horizontal
+  caves with wood/rock structures and pools. Structures, spawn functions, pixel scenes, `BitmapCaves` and the validity
+  retry are not placed.
 
 ### Recovered rules: Lua runtime and wand engine (ported in `crates/script`)
 

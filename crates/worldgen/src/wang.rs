@@ -492,8 +492,18 @@ impl Tileset {
     /// The biome map wrapper (`0x867770`): seeds a fresh generator, generates `h + 4` rows and
     /// drops the first four, so the visible map starts four rows into the herringbone pattern.
     pub fn generate_map(&self, seed: f64, w: usize, h: usize) -> Result<Vec<u8>, WangError> {
-        let mut rng = WangRng::new(seed);
-        let full = self.generate(&mut rng, w, h + 4)?;
+        self.generate_map_with(&mut WangRng::new(seed), w, h)
+    }
+
+    /// `generate_map` on an existing stream: the exe passes seed 0 for the maps it builds while
+    /// loading biomes, which continues the thread's generator instead of reseeding it.
+    pub fn generate_map_with(
+        &self,
+        rng: &mut WangRng,
+        w: usize,
+        h: usize,
+    ) -> Result<Vec<u8>, WangError> {
+        let full = self.generate(rng, w, h + 4)?;
         Ok(full[4 * w * 3..].to_vec())
     }
 }
