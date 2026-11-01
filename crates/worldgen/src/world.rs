@@ -14,7 +14,7 @@ use sim::random::Random;
 use crate::biome::{self, Topology};
 use crate::generate::{Generated, spawn_colors, wang_params, wang_script_colors};
 use crate::rules::RuleList;
-use crate::terrain::{ColorTable, Converted, Image, WangBiome, WangMap};
+use crate::terrain::{ColorTable, Converted, Image, WangBiome, WangMap, WangParams, lookup};
 use crate::validity::{Params, Pixels, clear_structures, mark_structures, random_colors, validate};
 use crate::wang::Tileset;
 
@@ -459,4 +459,57 @@ pub fn generate_biome(
         materials: out,
         spawn_pixels,
     })
+}
+
+/// The base terrain of a world: `GetMaterialAtPos` (`0x87d0e0`) for the Wang biomes. Procedural,
+/// image and static biomes, `BitmapCaves`, vegetation, pixel scenes and spawn functions are not
+/// part of it.
+pub struct WorldTerrain {
+    pub world: WorldMap,
+    params: Vec<WangParams>,
+    seed: i32,
+}
+
+impl WorldTerrain {
+    pub fn new(files: &Path, doc_defs: &[MaterialDef], world_seed: u32) -> Result<Self, String> {
+        let world = build_world_map(files, doc_defs, world_seed)?;
+        let params = wang_params(&world.materials);
+        Ok(Self {
+            world,
+            params,
+            seed: world_seed as i32,
+        })
+    }
+
+    /// The engine table index of the material at world cell `(x, y)` (0 = air), or `None` when
+    /// the biome there is not a Wang biome (or outside the biome map).
+    pub fn material_at(&self, x: i32, y: i32) -> Option<u32> {
+        let (ox, oy) = (self.world.offset.0 as i32, self.world.offset.1 as i32);
+        let (cx, cy) = ((x + ox).div_euclid(512), (y + oy).div_euclid(512));
+        let map = &self.world.biome_map;
+        if cx < 0 || cy < 0 || cx as usize >= map.width || cy as usize >= map.height {
+            return None;
+        }
+        let entry = map.cells[cy as usize * map.width + cx as usize]?;
+        let def = &self.world.entries.biomes[entry];
+        if !def.is_wang() {
+            return None;
+        }
+        Some(lookup(
+            &self.world.images.map,
+            &def.rules,
+            self.world.offset,
+            self.seed,
+            (f64::from(x), f64::from(y)),
+            |i| self.params.get(i as usize).copied().unwrap_or_default(),
+        ))
+    }
+
+    /// The name of an engine table index.
+    pub fn name(&self, index: u32) -> &str {
+        self.world
+            .materials
+            .get(index as usize)
+            .map_or("?", |d| d.name.as_str())
+    }
 }

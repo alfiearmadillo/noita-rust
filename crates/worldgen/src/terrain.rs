@@ -400,14 +400,34 @@ impl WangBiome {
     /// The material table index at world position `(x, y)`; 0 means none (air). `params` gives
     /// the Wang numbers of a table index.
     pub fn material_at(&self, x: f64, y: f64, params: impl Fn(u32) -> WangParams) -> u32 {
-        let map = &self.map;
-        let (u0, v0) = world_to_wang(self.offset, 0.0, x, y);
+        lookup(
+            &self.map,
+            &self.rules,
+            self.offset,
+            self.world_seed,
+            (x, y),
+            params,
+        )
+    }
+}
+
+/// `WangBiome::material_at` on borrowed parts, so biomes can share one image.
+pub fn lookup(
+    map: &WangMap,
+    rules: &RuleList,
+    offset: (f64, f64),
+    world_seed: i32,
+    (x, y): (f64, f64),
+    params: impl Fn(u32) -> WangParams,
+) -> u32 {
+    {
+        let (u0, v0) = world_to_wang(offset, 0.0, x, y);
         let idx = map.round_index(f64::from(u0), f64::from(v0));
         let mut threshold = 0.5_f32;
         let (u, v, value);
         if idx > 0 {
             let p = params(idx as u32);
-            (u, v) = world_to_wang(self.offset, p.noise_percent, x, y);
+            (u, v) = world_to_wang(offset, p.noise_percent, x, y);
             threshold = p.curvature;
             let (uf, vf) = (f64::from(u), f64::from(v));
             value = match p.noise_type {
@@ -416,7 +436,7 @@ impl WangBiome {
                 _ => map.smooth(uf, vf),
             };
         } else {
-            (u, v) = world_to_wang(self.offset, 1.0, x, y);
+            (u, v) = world_to_wang(offset, 1.0, x, y);
             value = map.smooth(f64::from(u), f64::from(v));
         }
         if value < threshold {
@@ -427,7 +447,6 @@ impl WangBiome {
             return idx as u32;
         }
         let base = terrain_value(x, y, value);
-        self.rules
-            .pick(x.round() as i32, y.round() as i32, base, self.world_seed)
+        rules.pick(x.round() as i32, y.round() as i32, base, world_seed)
     }
 }
