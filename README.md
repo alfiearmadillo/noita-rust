@@ -87,6 +87,7 @@ cargo run -p noita_probe -- workers                      # every region worker: 
 cargo run -p noita_probe -- follow 0 0 128 128 out --frames 120   # a TSV per game frame
 cargo run -p noita_probe -- biomes out_dir               # world seed, Wang offset and every Wang biome's images (needs a started run)
 cargo run --release -p worldgen --example compare_live -- out_dir   # compares them with the ported generator
+cargo run --release -p worldgen --example compare_cells -- out_dir grid.tsv -128 0 256 256   # base terrain vs a `grid --tsv` dump (pause the game first)
 ```
 
 The image is fixed-base (no ASLR), so addresses are absolute: the game state pointer at `0x122374C` (first dword is
