@@ -15,6 +15,7 @@ use crate::biome::{self, Topology};
 use crate::generate::{Generated, spawn_colors, wang_params, wang_script_colors};
 use crate::rules::RuleList;
 use crate::terrain::{ColorTable, Converted, Image, WangBiome, WangMap};
+use crate::validity::{Params, Pixels, random_colors, validate};
 use crate::wang::Tileset;
 
 /// One `<Biome biome_filename color>` entry of `_biomes_all.xml`.
@@ -192,15 +193,26 @@ pub fn find_regions(map: &BiomeMap, is_wang: impl Fn(usize) -> bool) -> Vec<Regi
 /// `Random(double)` advanced `width % 11 + seed % 12` steps, then one step per attempt scaled like
 /// the Wang RNG does.
 pub fn region_wang_seed(seed: u32, width: usize, attempt: u32) -> f64 {
+    let mut r = region_rng(seed, width);
+    let mut v = 0.0;
+    for _ in 0..=attempt {
+        v = next_wang_seed(&mut r);
+    }
+    v
+}
+
+/// The generator `0x879bf0` seeds with the region seed and advances `width % 11 + seed % 12`
+/// steps; the Wang seeds of the attempts and then the random color picks are its next draws.
+fn region_rng(seed: u32, width: usize) -> Random {
     let mut r = Random::from_seed(f64::from(seed));
     for _ in 0..width % 11 + (seed % 12) as usize {
         r.next_unit();
     }
-    let mut v = 0.0;
-    for _ in 0..=attempt {
-        v = r.next_unit() * 2_147_483_645.0;
-    }
-    v
+    r
+}
+
+fn next_wang_seed(r: &mut Random) -> f64 {
+    r.next_unit() * 2_147_483_645.0
 }
 
 /// The world-size images and what produced them. Material indices are positions in the engine's
@@ -210,6 +222,8 @@ pub struct WorldMap {
     pub entries: Entries,
     pub biome_map: BiomeMap,
     pub regions: Vec<Region>,
+    /// How many generation attempts each region took.
+    pub attempts: Vec<u32>,
     /// `0x1206fb0` / `0x12051b0`: world position + offset is the position in the biome map.
     pub offset: (f64, f64),
     /// The materials in engine order.
@@ -218,29 +232,24 @@ pub struct WorldMap {
     pub to_document: Vec<usize>,
 }
 
+/// `DAT_01152478`: regions up to this many Wang pixels tall are checked.
+const VALIDATED_HEIGHT: usize = 205;
+/// The region driver gives up after this many attempts and keeps the last image.
+const MAX_ATTEMPTS: u32 = 100;
+const COALMINE: &str = "data/wang_tiles/coalmine.png";
+
 fn wang_pixels(chunks: usize) -> usize {
     chunks * 512 / 10
 }
 
 /// Builds the world-size Wang images for `world_seed`; `doc_defs` are the materials in document
-/// order. Every region takes its first generation attempt: the validity check (`0x8771a0`,
-/// regions at most 205 Wang pixels tall) and the coalmine / excavationsite start-area step
-/// (`0x876fb0`) are not ported.
+/// order. Regions at most 205 Wang pixels tall are generated until `validity::validate` accepts
+/// them (at most 100 attempts); the coalmine / excavationsite structure rectangles (`0x876fb0`)
+/// and the spawn-function limits are not ported.
 pub fn build_world_map(
     files: &Path,
     doc_defs: &[MaterialDef],
     world_seed: u32,
-) -> Result<WorldMap, String> {
-    build_world_map_with(files, doc_defs, world_seed, |_| 0)
-}
-
-/// uild_world_map with the generation attempt to use for each region (by index in
-/// WorldMap::regions order).
-pub fn build_world_map_with(
-    files: &Path,
-    doc_defs: &[MaterialDef],
-    world_seed: u32,
-    attempt_of: impl Fn(usize) -> u32,
 ) -> Result<WorldMap, String> {
     let to_document = materials::engine_order(doc_defs);
     let defs: Vec<MaterialDef> = to_document.iter().map(|&i| doc_defs[i].clone()).collect();
@@ -266,7 +275,16 @@ pub fn build_world_map_with(
         .map(|s| wang_script_colors(&s))
         .unwrap_or_default();
     let mut done = vec![false; biome_map.width * biome_map.height];
-    for (region_index, r) in regions.iter().enumerate() {
+    let offset = (
+        biome_map.width as f64 * 0.5 * 512.0,
+        f64::from(entries.offset_y) * 512.0,
+    );
+    let offset_x = offset.0 as i32;
+    let extra_layer = load_png(&files.join("data/wang_tiles/extra_layers/coalmine.png"))
+        .ok()
+        .map(|t| Pixels::from_rgba(t.rgba(), t.width() as usize, t.height() as usize));
+    let mut region_attempts = Vec::new();
+    for r in &regions {
         let def = &entries.biomes[r.biome];
         let template = def.topology.wang_template_file.clone().unwrap_or_default();
         if !tilesets.contains_key(&template) {
@@ -285,13 +303,33 @@ pub fn build_world_map_with(
         let (x0w, y0w) = (wang_pixels(r.x0), wang_pixels(r.y0));
         let (rw, rh) = (wang_pixels(r.x1 + 1) - x0w, wang_pixels(r.y1 + 1) - y0w);
         let (rw, rh) = (rw.clamp(1, 1024), rh.clamp(1, 1024));
-        let rgb = tilesets[&template]
-            .generate_map(
-                region_wang_seed(world_seed, rw, attempt_of(region_index)),
-                rw,
-                rh,
-            )
-            .map_err(|e| format!("{template}: {e:?}"))?;
+        let origin_x = (r.x0 * 512) as i32 - offset_x;
+        let mut attempts = 0_u32;
+        let mut rng = region_rng(world_seed, rw);
+        let rgb = loop {
+            let mut rgb = tilesets[&template]
+                .generate_map(next_wang_seed(&mut rng), rw, rh)
+                .map_err(|e| format!("{template}: {e:?}"))?;
+            attempts += 1;
+            let mut pixels = Pixels::from_rgb(&rgb, rw, rh);
+            if rh > VALIDATED_HEIGHT {
+                random_colors(&mut pixels, &def.topology.random_colors, &mut rng);
+                break pixels.to_rgb();
+            }
+            let params = Params {
+                template: &template,
+                origin_x,
+                world_seed: world_seed as i32,
+                extra: extra_layer.as_ref().filter(|_| template == COALMINE),
+            };
+            let valid = validate(&mut pixels, &params);
+            if valid || attempts >= MAX_ATTEMPTS {
+                random_colors(&mut pixels, &def.topology.random_colors, &mut rng);
+                rgb = pixels.to_rgb();
+                break rgb;
+            }
+        };
+        region_attempts.push(attempts);
         // The spawn colors: the CSV registry first, then the biome script's own.
         let mut spawn_index: HashMap<u32, u32> = HashMap::new();
         let script = def
@@ -337,10 +375,6 @@ pub fn build_world_map_with(
         }
     }
     let (w, h) = (ww as i32, wh as i32);
-    let offset = (
-        biome_map.width as f64 * 0.5 * 512.0,
-        f64::from(entries.offset_y) * 512.0,
-    );
     Ok(WorldMap {
         images: Converted {
             map: WangMap {
@@ -352,6 +386,7 @@ pub fn build_world_map_with(
         entries,
         biome_map,
         regions,
+        attempts: region_attempts,
         offset,
         materials: defs.to_vec(),
         to_document,

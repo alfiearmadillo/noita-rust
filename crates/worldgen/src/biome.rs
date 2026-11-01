@@ -18,6 +18,15 @@ pub struct Topology {
     pub lua_script: Option<String>,
     /// `static_tile="1"`: the template is a fixed picture, not a herringbone tileset.
     pub static_tile: bool,
+    /// `<RandomMaterials><RandomColor input_color output_colors>`: a pixel word (`0xAABBGGRR`)
+    /// and the words one blob of it is replaced with (the XML writes `0xAARRGGBB`).
+    pub random_colors: Vec<(u32, Vec<u32>)>,
+}
+
+/// `FFRRGGBB` as the engine's `0xAABBGGRR` pixel word.
+fn pixel_word(argb: &str) -> Option<u32> {
+    let v = u32::from_str_radix(argb.trim(), 16).ok()?;
+    Some((v & 0xff00_0000) | (v & 0xff) << 16 | (v & 0xff00) | (v >> 16) & 0xff)
 }
 
 #[derive(Debug)]
@@ -162,6 +171,24 @@ pub fn parse(xml: &str, resolve: impl Fn(&str) -> u32) -> Result<(Topology, Rule
         wang_map_height: num("wang_map_height"),
         lua_script: topo.attr("lua_script").map(str::to_owned),
         static_tile: topo.attr("static_tile").is_some_and(|v| v.trim() != "0"),
+        random_colors: topo
+            .child("RandomMaterials")
+            .map(|m| {
+                m.children
+                    .iter()
+                    .filter(|c| c.tag == "RandomColor")
+                    .filter_map(|c| {
+                        let input = pixel_word(c.attr("input_color")?)?;
+                        let outputs: Vec<u32> = c
+                            .attr("output_colors")?
+                            .split(',')
+                            .filter_map(pixel_word)
+                            .collect();
+                        Some((input, outputs))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
     let rules = materials
         .children

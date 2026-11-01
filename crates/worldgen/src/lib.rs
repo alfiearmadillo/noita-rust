@@ -5,6 +5,7 @@ pub mod biome;
 pub mod generate;
 pub mod rules;
 pub mod terrain;
+pub mod validity;
 pub mod wang;
 pub mod warp;
 pub mod world;

@@ -166,45 +166,4 @@ fn main() {
             ported.entries.biomes[r.biome].file, r.x0, r.y0, r.x1, r.y1
         );
     }
-
-    if let Some(n) = std::env::var("ATTEMPTS")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-    {
-        let count = ported.regions.len();
-        let mut best = vec![(usize::MAX, 0_u32); count];
-        for k in 0..n {
-            let world = worldgen::world::build_world_map_with(&files, &defs, seed as u32, |_| k)
-                .expect("world map");
-            let map = &world.images.map;
-            for (i, r) in world.regions.iter().enumerate() {
-                let (x0, y0) = (r.x0 * 512 / 10, r.y0 * 512 / 10);
-                let (x1, y1) = (
-                    ((r.x1 + 1) * 512 / 10) as i32,
-                    ((r.y1 + 1) * 512 / 10) as i32,
-                );
-                let mut d = 0;
-                for y in y0 as i32..y1.min(h) {
-                    for x in x0 as i32..x1.min(w) {
-                        let j = (y * w + x) as usize;
-                        d += usize::from(map.values.data[j].to_bits() != values[j])
-                            + usize::from(map.materials.data[j] != mats[j]);
-                    }
-                }
-                if d < best[i].0 {
-                    best[i] = (d, k);
-                }
-            }
-        }
-        for (i, r) in ported.regions.iter().enumerate() {
-            let (rw, rh) = (
-                (r.x1 + 1) * 512 / 10 - r.x0 * 512 / 10,
-                (r.y1 + 1) * 512 / 10 - r.y0 * 512 / 10,
-            );
-            println!(
-                "region {i:>3} {:<36} {rw}x{rh}: best attempt {} ({} px differ)",
-                ported.entries.biomes[r.biome].file, best[i].1, best[i].0
-            );
-        }
-    }
 }
