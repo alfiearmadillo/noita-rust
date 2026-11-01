@@ -15,7 +15,7 @@ use crate::biome::{self, Topology};
 use crate::generate::{Generated, spawn_colors, wang_params, wang_script_colors};
 use crate::rules::RuleList;
 use crate::terrain::{ColorTable, Converted, Image, WangBiome, WangMap};
-use crate::validity::{Params, Pixels, random_colors, validate};
+use crate::validity::{Params, Pixels, clear_structures, mark_structures, random_colors, validate};
 use crate::wang::Tileset;
 
 /// One `<Biome biome_filename color>` entry of `_biomes_all.xml`.
@@ -237,6 +237,7 @@ const VALIDATED_HEIGHT: usize = 205;
 /// The region driver gives up after this many attempts and keeps the last image.
 const MAX_ATTEMPTS: u32 = 100;
 const COALMINE: &str = "data/wang_tiles/coalmine.png";
+const EXCAVATIONSITE: &str = "data/wang_tiles/excavationsite.png";
 
 fn wang_pixels(chunks: usize) -> usize {
     chunks * 512 / 10
@@ -312,18 +313,20 @@ pub fn build_world_map(
                 .map_err(|e| format!("{template}: {e:?}"))?;
             attempts += 1;
             let mut pixels = Pixels::from_rgb(&rgb, rw, rh);
-            if rh > VALIDATED_HEIGHT {
-                random_colors(&mut pixels, &def.topology.random_colors, &mut rng);
-                break pixels.to_rgb();
-            }
+            let structures = if template == COALMINE || template == EXCAVATIONSITE {
+                mark_structures(&mut pixels)
+            } else {
+                Vec::new()
+            };
             let params = Params {
                 template: &template,
                 origin_x,
                 world_seed: world_seed as i32,
                 extra: extra_layer.as_ref().filter(|_| template == COALMINE),
             };
-            let valid = validate(&mut pixels, &params);
+            let valid = rh > VALIDATED_HEIGHT || validate(&mut pixels, &params);
             if valid || attempts >= MAX_ATTEMPTS {
+                clear_structures(&mut pixels, &structures);
                 random_colors(&mut pixels, &def.topology.random_colors, &mut rng);
                 rgb = pixels.to_rgb();
                 break rgb;

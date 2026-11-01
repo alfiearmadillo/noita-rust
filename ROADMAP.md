@@ -126,10 +126,9 @@ Status: `[x]` done, `[~]` partly done (see note), `[ ]` not started.
     covered). The world image (`worldgen::world`): biome map regions, per-region Wang images composited into the one
     world-size image every Wang biome samples, the Wang offset, and the engine's material table order
     (`noita_data::materials::engine_order`); checked against the running game with `noita_probe biomes` and
-    `compare_live` (seed, offset and image size equal, about 98 % of the pixels). `render_biome` draws a biome from a
+    `compare_live` (seed, offset and image size equal, 49 of 51 regions pixel exact). `render_biome` draws a biome from a
     seed, and `NOITA_BIOME=coalmine` loads a generated slice in the game (`worldgen::generate`). Missing: the
-    validity / spawn-limit check `0x8771a0` and the coalmine / excavationsite step `0x876fb0` of the region driver
-    (retries and blanked spawn pixels make small regions differ), procedural (type 0) biomes, pixel scenes,
+    spawn-function limits and the other region driver outputs (spawn pixel lists), procedural (type 0) biomes, pixel scenes,
     spawn functions, `BitmapCaves` / `RandomMaterials`, vegetation extras of the chunk generator `0x73b040`.22. [ ] World streaming: chunk load/unload, world size, wrapping, edges.
 23. [ ] Rendering: backgrounds/parallax, sky, lighting, fog of war, emissive materials, glow, visibility-affecting
     post effects.

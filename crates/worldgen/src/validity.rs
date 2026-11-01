@@ -4,10 +4,8 @@
 //! A region without such a path is generated again with the next seed.
 //!
 //! Pixels are the engine's words, `0xAABBGGRR`. Not ported: the per-spawn-function limits (extra
-//! spawn pixels are blanked, which leaves the float and material images unchanged), the second
-//! flood fill that tags reachable open pixels (alpha `0xfe`, only used for the flag image) and the
-//! structure rectangles of coalmine and excavationsite (`0x876fb0`).
-
+//! spawn pixels are blanked, which leaves the float and material images unchanged) and the second
+//! flood fill that tags reachable open pixels (alpha `0xfe`, only used for the flag image).
 use std::collections::VecDeque;
 
 use sim::random::Random;
@@ -110,6 +108,12 @@ fn runs(img: &Pixels, y: usize) -> Vec<(usize, usize, usize)> {
     out
 }
 
+/// The order `std::sort` puts the run lists in (comparators `0x998900` / `0x998eb0`): by the
+/// distance of the run's center from the left edge, runs of at most 6 pixels last.
+fn sort_key(&(x, _, len): &(usize, usize, usize)) -> usize {
+    x + if len < 7 { 0x800 } else { 0 } + len / 2
+}
+
 /// `0x876680`: breadth first search over open pixels (down, left, right, up); the result holds,
 /// for every reached pixel, the step that leads back (2 up, 3 down, 4 left, 5 right).
 fn search(img: &Pixels, start: (usize, usize)) -> Vec<u8> {
@@ -171,15 +175,6 @@ fn fill(img: &mut Pixels, flags: &mut [bool], start: (usize, usize), color: u32)
     }
 }
 
-/// `(int)f` as the CPU does it: out of range gives `i32::MIN`.
-fn trunc(f: f32) -> i32 {
-    if f >= 2_147_483_648.0 || f.is_nan() {
-        i32::MIN
-    } else {
-        f as i32
-    }
-}
-
 fn step(s: i32) -> i32 {
     let v = s
         .wrapping_mul(0x41a7)
@@ -192,7 +187,8 @@ fn step(s: i32) -> i32 {
 }
 
 /// `0x876ce0`: every blob left becomes white (probability one half) or black, in raster order,
-/// drawing from a generator seeded by the world seed that keeps its state as a float.
+/// drawing from a generator seeded by the world seed (exact integer state, as the check against
+/// the running game shows; the decompile's float cast does not round).
 fn randomize_blobs(img: &mut Pixels, flags: &mut [bool], world_seed: i32) {
     let mut d = f64::from(world_seed);
     if world_seed < 0 {
@@ -201,18 +197,81 @@ fn randomize_blobs(img: &mut Pixels, flags: &mut [bool], world_seed: i32) {
     if d >= 2_147_483_647.0 {
         d *= 0.5;
     }
-    let mut f = step(d as i32) as f32;
+    let mut s = step(d as i32);
     for y in 0..img.height {
         for x in 0..img.width {
             if !flags[y * img.width + x] && img.at(x, y) == BLOB {
-                f = step(trunc(f)) as f32;
-                let color = if f * 4.656_613e-10_f32 + 0.0 < 0.5 {
+                s = step(s);
+                let color = if f64::from(s) * f64::from(4.656_613e-10_f32) < 0.5 {
                     WHITE
                 } else {
                     BLACK
                 };
                 fill(img, flags, (x, y), color);
             }
+        }
+    }
+}
+
+/// Marker pixel words (`0xAABBGGRR`) that `0x876fb0` turns into rectangles.
+const MARKERS: [i32; 11] = [
+    -0xff01, -0x7f_ff01, -0xf501, -0xff_a83d, -0x9b_5400, -0x91_5400, -0x9788, -0x61_2890,
+    -0x60_2890, -0x5f_2890, -0x5e_2890,
+];
+
+/// A rectangle `[x0, x1) x [y0, y1)` of structure interior.
+pub type Rect = (usize, usize, usize, usize);
+
+/// `0x876f50`: how many pixels from `(x, y)` along `(dx, dy)` are open (black or transparent).
+fn open_run(img: &Pixels, mut x: i64, mut y: i64, dx: i64, dy: i64) -> usize {
+    let mut n = 0;
+    loop {
+        if x < 0 || y < 0 || x >= img.width as i64 || y >= img.height as i64 {
+            return n;
+        }
+        if img.at(x as usize, y as usize) & 0xff_ffff != 0 {
+            return n;
+        }
+        x += dx;
+        y += dy;
+        n += 1;
+        if n > 9999 {
+            return n;
+        }
+    }
+}
+
+/// `0x876fb0` (coalmine and excavationsite templates): every marker pixel claims the open
+/// rectangle that starts diagonally below it, which is painted white so the path search treats it
+/// as solid; `clear_structures` makes the rectangles black once the region is accepted.
+pub fn mark_structures(img: &mut Pixels) -> Vec<Rect> {
+    let mut rects = Vec::new();
+    for y in 0..img.height {
+        for x in 0..img.width {
+            if !MARKERS.contains(&(img.at(x, y) as i32)) {
+                continue;
+            }
+            let (x1, y1) = (x + 1, y + 1);
+            let x2 = x1 + open_run(img, x1 as i64, y1 as i64, 1, 0);
+            let y2 = y1 + open_run(img, x1 as i64, y1 as i64, 0, 1);
+            paint(img, (x1, y1, x2, y2), WHITE);
+            rects.push((x1, y1, x2, y2));
+        }
+    }
+    rects
+}
+
+/// `0x876eb0`.
+pub fn clear_structures(img: &mut Pixels, rects: &[Rect]) {
+    for &r in rects {
+        paint(img, r, BLACK);
+    }
+}
+
+fn paint(img: &mut Pixels, (x0, y0, x1, y1): Rect, color: u32) {
+    for y in y0..y1.min(img.height) {
+        for x in x0..x1.min(img.width) {
+            img.data[y * img.width + x] = color;
         }
     }
 }
@@ -242,8 +301,10 @@ pub fn random_colors(img: &mut Pixels, table: &[(u32, Vec<u32>)], rng: &mut Rand
 /// valid (the image is only meaningful then).
 pub fn validate(img: &mut Pixels, p: &Params) -> bool {
     let (w, h) = (img.width, img.height);
-    let top = runs(img, 0);
-    let bottom = runs(img, h - 1);
+    let (mut top, mut bottom) = (runs(img, 0), runs(img, h - 1));
+    top.sort_by_key(sort_key);
+    bottom.sort_by_key(sort_key);
+
     let coalmine = p.template == "data/wang_tiles/coalmine.png";
     // The start entries (x, y, length) and the changes to the image around them. A start area
     // outside the region leaves every open run of the top row as a start.
@@ -325,6 +386,7 @@ pub fn validate(img: &mut Pixels, p: &Params) -> bool {
             _ => break,
         }
     }
+
     let mut flags = vec![false; w * h];
     for &(x, y) in &path {
         if img.at(x, y) == BLOB {
@@ -397,6 +459,46 @@ mod tests {
         // The column of blobs at x = 15 (rows 0..=6 cleared to black, row 7 a blob on the path).
         assert_eq!(img.at(15, 7), BLACK);
         assert!(img.data.iter().all(|&c| c != BLOB));
+    }
+
+    #[test]
+    fn blobs_draw_from_the_exact_integer_chain() {
+        // Ten one-pixel blobs: the chain of world seed 336730580 gives white only for the second
+        // draw (checked against a running game, where it decides the coalmine_alt blobs).
+        let mut img = Pixels {
+            width: 20,
+            height: 1,
+            data: (0..20)
+                .map(|i| if i % 2 == 0 { BLOB } else { WHITE })
+                .collect(),
+        };
+        let mut flags = vec![false; 20];
+        randomize_blobs(&mut img, &mut flags, 336_730_580);
+        let white: Vec<bool> = (0..10).map(|i| img.data[i * 2] == WHITE).collect();
+        assert_eq!(
+            white,
+            [
+                false, true, false, false, false, false, false, false, false, false
+            ]
+        );
+    }
+
+    #[test]
+    fn structure_markers_claim_the_open_rectangle_below_them() {
+        let mut img = Pixels {
+            width: 5,
+            height: 5,
+            data: vec![BLACK; 25],
+        };
+        img.data[0] = 0xffff_00ff;
+        img.data[3 * 5 + 3] = WHITE;
+        let rects = mark_structures(&mut img);
+        // Both runs from (1, 1) are 4 long; the white pixel inside the rectangle does not matter.
+        assert_eq!(rects, vec![(1, 1, 5, 5)]);
+        assert_eq!(img.at(2, 2), WHITE);
+        clear_structures(&mut img, &rects);
+        assert_eq!(img.at(2, 2), BLACK);
+        assert_eq!(img.at(0, 0), 0xffff_00ff);
     }
 
     #[test]

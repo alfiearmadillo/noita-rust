@@ -687,16 +687,34 @@ are the pixel-scene fill, not this. The lookup depends on the biome type (`+4`):
   region into the world image cell by cell (`0x870250` / `0x929dc0`; only the destination is clamped). The lookup uses
   the position + offset with offset = `(biome map width * 0.5 * 512, biome_offset_y * 512)` = (17920, 7168), not a random
   value. Checked against the running game (`noita_probe biomes`, `compare_live`): the seed, the offset and the image
-  size match, and 34 of the 51 regions pixel for pixel (about 98 % of the world image); `static_tile="1"` biomes (the temples) use their
-  template as a fixed picture and are not Wang regions.
-- **Region generation** (`0x879bf0`, `worldgen::world::region_wang_seed`): the region image is `min(width, 1024)` x
-  `min(height, 1024)` Wang pixels; the Wang seed is a `Random(double world seed)` stepped `width % 11 + seed % 12` times,
-  then once per attempt, scaled by `2147483645`. Regions at most 205 Wang pixels tall go through the validity and
-  spawn-limit function `0x8771a0` (path finding, a random cap per spawn function that blanks the extra spawn pixels to
-  black, clearing of the start area) and are regenerated (up to 100 attempts) when it fails; coalmine and excavationsite
-  regions also run `0x876fb0`. Neither is ported, so small regions differ from the game wherever it retried or blanked
-  pixels, and the rows of regions taller than 1024 pixels (the game reads past the image there) are not reproduced.
-- **Material order**: the engine's material table is not the document order of `materials.xml`: all `<CellData>` in
+  size match, and 49 of the 51 regions pixel for pixel; the other two are taller than 1024 Wang pixels (below).
+  `static_tile="1"` biomes (the temples) use their template as a fixed picture and are not Wang regions.
+- **Region generation** (`0x879bf0`, `worldgen::world`, `worldgen::validity`; every step is checked against the running
+  game): the region image is `min(width, 1024)` x `min(height, 1024)` Wang pixels. One generator drives it:
+  `Random(double world seed)` stepped `width % 11 + seed % 12` times; each attempt takes the next draw `* 2147483645` as
+  the Wang seed, and the random color picks below take the draws after the last attempt. After a generation the pixels
+  (words `0xAABBGGRR`) go through
+  1. for the coalmine and excavationsite templates (towers use the latter) `0x876fb0`: every marker pixel (the colors of
+     the pixel scene spawners) claims the open rectangle that starts diagonally below it (runs of black pixels to the
+     right and down), painted white so it blocks the path search and made black again once the region is accepted
+     (`0x876eb0`);
+  2. for regions at most 205 pixels tall the validity check `0x8771a0`: the start entry is the world x range 159..223
+     (`DAT_011525d4`, `DAT_0115303c`) as one open run in the first rows (x `(159 - origin) / 10`, rows 0 to 6 made black;
+     coalmine uses run `(0x8e, 0, 12)` and overlays `extra_layers/coalmine.png`), or, when that range lies outside the
+     region, every open run of the top row as a candidate start; run lists are sorted by `x + len / 2` (`+ 0x800` for runs of
+     at most 6 pixels, `std::sort` with comparators `0x998900` / `0x998eb0`); a breadth first search over open pixels
+     (black, or the blob color `0xc0ffee`; neighbors down, left, right, up, `0x876680`) from the first start that reaches
+     the center of an open run of the bottom row; on failure the region is generated again (up to 100 attempts, then the
+     last image stays); on success the blobs on the walked path become black and every other blob (4-connected pixels of
+     `0xc0ffee`, raster order) becomes white or black from a generator seeded with the world seed (exact integer chain,
+     white when below one half, `0x876ce0`). The per-spawn-function limits (`wang_scripts.csv`) only blank spawn pixels,
+     which leaves the float and material images unchanged;
+  3. the biome's `<RandomMaterials><RandomColor input_color output_colors>` pass: in raster order a pixel with an input
+     color recolors its whole 4-connected blob with output color number `floor(draw * count)` (the colors are written
+     `AARRGGBB`).
+
+  Regions taller than 1024 Wang pixels (winter_caves, lake_deep here) copy the missing rows from beyond the end of the
+  image buffer, which is heap garbage; those rows are not reproduced.- **Material order**: the engine's material table is not the document order of `materials.xml`: all `<CellData>` in
   document order (a repeated name is not added again), then the `<CellDataChild>` elements in passes over a pending list
   (a child whose parent is already in the table is added and replaced in the list by the last pending child, which is
   then examined in its place; the others wait for the next pass). `noita_data::materials::engine_order` reproduces
