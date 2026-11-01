@@ -59,7 +59,8 @@ cargo clippy --workspace --all-targets -- -D warnings   # lints (CI)
 cargo run -p sim --example falling_sand                 # print grid each tick until settled
 cargo run -p sim --example tick_timing                  # debug tick timing
 cargo run -p sim --example tick_timing --release        # release tick timing
-cargo run -p game                                       # Bevy sandbox window (needs extracted noita_files)
+cargo run --release -p game                             # Bevy window with the generated terrain of world NOITA_SEED over the first mines (needs extracted noita_files)
+$env:NOITA_SCENE="test"; cargo run -p game               # the small test scene instead
 $env:NOITA_BIOME="coalmine"; cargo run -p game          # same, with a generated Coal Mines slice (NOITA_SEED=..)
 cargo run -p worldgen --release --example render_biome -- coalmine 12345 1536 1024 out.png   # biome terrain PNG
 python scripts/emulate_golden.py wang|warp|rules|terrain|material_at|simplex2d   # regenerate emulator golden data

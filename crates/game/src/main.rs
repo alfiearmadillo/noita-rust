@@ -35,6 +35,13 @@ const TICK_HZ: f64 = 60.0;
 const BRUSH_RADIUS: i32 = 3;
 /// Local placeholder; the reference draws background art behind air.
 const BACKGROUND: [u8; 4] = [20, 20, 28, 255];
+/// Terrain mode: a window of the real world over the first mines (all Wang biome).
+const TERRAIN_CHUNKS: (u32, u32) = (16, 8);
+const TERRAIN_ORIGIN: (i32, i32) = (-512, 0);
+/// The least world area the camera shows in terrain mode.
+const TERRAIN_VIEW: (f32, f32) = (480.0, 270.0);
+/// The world seed the port was checked against.
+const DEFAULT_SEED: u32 = 336_730_580;
 
 #[derive(Resource)]
 struct Sim(World);
@@ -124,6 +131,18 @@ struct Control {
 #[derive(Resource)]
 struct Canvas(Handle<Image>);
 
+/// The world as it was built, for `R`.
+#[derive(Resource)]
+struct Pristine(World);
+
+/// Least world area the camera shows while it follows the player (terrain mode).
+#[derive(Resource)]
+struct View(Option<Vec2>);
+
+/// World position of the sim's top-left cell.
+#[derive(Resource)]
+struct Origin((i32, i32));
+
 fn noita_files() -> PathBuf {
     std::env::var_os("NOITA_FILES").map_or_else(
         || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../noita_files"),
@@ -195,7 +214,7 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-    let spawn = scene_spawn(&palette);
+    let scene = build_scene(&palette);
     App::new()
         .add_plugins((
             DefaultPlugins
@@ -220,8 +239,11 @@ fn main() -> ExitCode {
         .insert_resource(palette)
         .insert_resource(SheetSource(Some((sheet_def, sheet))))
         .init_resource::<PlayerInput>()
-        .insert_resource(Player(new_player(spawn)))
-        .insert_resource(Spawn(spawn))
+        .insert_resource(Player(new_player(scene.spawn)))
+        .insert_resource(Spawn(scene.spawn))
+        .insert_resource(Pristine(scene.world))
+        .insert_resource(View(scene.view))
+        .insert_resource(Origin(scene.origin))
         .insert_resource(Flying(Particles::new(PARTICLE_SEED)))
         .add_systems(Startup, (setup, spawn_debug_menu))
         .add_systems(FixedUpdate, step_sim)
@@ -237,6 +259,7 @@ fn main() -> ExitCode {
                 explode_at_cursor,
                 upload_texture,
                 sync_player_sprite,
+                follow_camera,
                 update_title,
             )
                 .chain(),
@@ -245,68 +268,130 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The world to play in: the test scene, or a generated biome when `NOITA_BIOME` names one
-/// (`NOITA_SEED` picks the seed; default 12345). See `worldgen::generate`: only the Wang
-/// terrain is generated, not structures, spawn functions or pixel scenes.
-fn build_world(p: &Palette) -> World {
-    let Some(biome) = std::env::var_os("NOITA_BIOME") else {
-        return test_scene(p);
-    };
-    let biome = biome.to_string_lossy().into_owned();
+/// What to play in.
+struct Scene {
+    world: World,
+    spawn: (f32, f32),
+    view: Option<Vec2>,
+    origin: (i32, i32),
+}
+
+/// `NOITA_SCENE=test` is the sandbox test scene, `NOITA_BIOME=<name>` a generated slice of one
+/// biome, anything else the generated terrain of world `NOITA_SEED` over the first mines. Only
+/// the Wang biomes' base terrain exists (see `worldgen`): no caves, structures or pixel scenes.
+fn build_scene(p: &Palette) -> Scene {
     let seed: u32 = std::env::var("NOITA_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(12345);
-    let mut world = World::new(WIDTH_CHUNKS, HEIGHT_CHUNKS, CHUNK_SIZE, p.table.clone(), 1);
-    let (w, h) = (world.width() as usize, world.height() as usize);
-    // Start a little inside the first biome map chunk that shows the biome.
-    match worldgen::generate::generate_biome(
-        &noita_files(),
-        &p.defs,
-        &biome,
-        seed,
-        (64, 64),
-        (w, h),
-    ) {
-        Ok(area) => {
-            for (i, &m) in area.materials.iter().enumerate() {
-                let (x, y) = ((i % w) as i32, (i / w) as i32);
-                world.set(x, y, MaterialId(m)).expect("in bounds");
+        .unwrap_or(DEFAULT_SEED);
+    let test = || Scene {
+        world: test_scene(p),
+        spawn: PLAYER_SPAWN,
+        view: None,
+        origin: (0, 0),
+    };
+    if std::env::var("NOITA_SCENE").is_ok_and(|s| s == "test") {
+        return test();
+    }
+    if let Some(biome) = std::env::var_os("NOITA_BIOME") {
+        let biome = biome.to_string_lossy().into_owned();
+        let mut world = World::new(WIDTH_CHUNKS, HEIGHT_CHUNKS, CHUNK_SIZE, p.table.clone(), 1);
+        let (w, h) = (world.width() as usize, world.height() as usize);
+        // Start a little inside the first biome map chunk that shows the biome.
+        let area = worldgen::generate::generate_biome(
+            &noita_files(),
+            &p.defs,
+            &biome,
+            seed,
+            (64, 64),
+            (w, h),
+        );
+        return match area {
+            Ok(area) => {
+                for (i, &m) in area.materials.iter().enumerate() {
+                    let (x, y) = ((i % w) as i32, (i / w) as i32);
+                    world.set(x, y, MaterialId(m)).expect("in bounds");
+                }
+                let spawn = standing_spot(p, &world).unwrap_or(PLAYER_SPAWN);
+                Scene {
+                    world,
+                    spawn,
+                    view: None,
+                    origin: area.origin,
+                }
             }
-            world
+            Err(e) => {
+                eprintln!("NOITA_BIOME={biome}: {e}; using the test scene");
+                test()
+            }
+        };
+    }
+    match terrain_world(p, seed) {
+        Ok(world) => {
+            let spawn = standing_spot(p, &world).unwrap_or(PLAYER_SPAWN);
+            Scene {
+                world,
+                spawn,
+                view: Some(Vec2::new(TERRAIN_VIEW.0, TERRAIN_VIEW.1)),
+                origin: TERRAIN_ORIGIN,
+            }
         }
         Err(e) => {
-            eprintln!("NOITA_BIOME={biome}: {e}; using the test scene");
-            test_scene(p)
+            eprintln!("terrain of seed {seed}: {e}; using the test scene");
+            test()
         }
     }
 }
 
-/// Where the player starts: the first standing spot (air above solid ground) of a generated
-/// world, else the test scene's spawn.
-fn scene_spawn(p: &Palette) -> (f32, f32) {
-    if std::env::var_os("NOITA_BIOME").is_none() {
-        return PLAYER_SPAWN;
+/// The base terrain of world `seed` over `TERRAIN_ORIGIN`; cells of biomes that are not ported
+/// stay air.
+fn terrain_world(p: &Palette, seed: u32) -> Result<World, String> {
+    eprintln!("generating the terrain of world {seed} ...");
+    let terrain = worldgen::world::WorldTerrain::new(&noita_files(), &p.defs, seed)?;
+    let mut world = World::new(
+        TERRAIN_CHUNKS.0,
+        TERRAIN_CHUNKS.1,
+        CHUNK_SIZE,
+        p.table.clone(),
+        1,
+    );
+    for y in 0..world.height() {
+        for x in 0..world.width() {
+            let at = terrain.material_at(TERRAIN_ORIGIN.0 + x, TERRAIN_ORIGIN.1 + y);
+            if let Some(m) = at.filter(|&m| m != 0) {
+                let id = MaterialId(terrain.document_index(m));
+                world.set(x, y, id).expect("in bounds");
+            }
+        }
     }
-    let world = build_world(p);
+    Ok(world)
+}
+
+/// A standing spot (air above solid ground), the one nearest the middle column and highest up.
+fn standing_spot(p: &Palette, world: &World) -> Option<(f32, f32)> {
     let solid = |x, y| {
         world
             .get(x, y)
             .and_then(|m| p.table.get(m))
             .is_some_and(|m| m.cell_type == CellType::Solid)
     };
-    for y in 20..world.height() - 2 {
-        for x in 12..world.width() - 12 {
-            let roomy =
-                (y - 14..=y).all(|yy| (x - 3..=x + 3).all(|xx| world.get(xx, yy) == Some(AIR)));
-            if roomy && solid(x, y + 1) {
-                return (x as f32, y as f32 - 6.0);
+    let (w, h) = (world.width(), world.height());
+    for y in 20..h - 2 {
+        for dx in 0..w / 2 {
+            for x in [w / 2 - dx, w / 2 + dx] {
+                if x < 12 || x >= w - 12 {
+                    continue;
+                }
+                let roomy =
+                    (y - 14..=y).all(|yy| (x - 3..=x + 3).all(|xx| world.get(xx, yy) == Some(AIR)));
+                if roomy && solid(x, y + 1) {
+                    return Some((x as f32, y as f32 - 6.0));
+                }
             }
         }
     }
-    PLAYER_SPAWN
+    None
 }
-
 fn test_scene(p: &Palette) -> World {
     let [sand, water, rock] = p.brushes;
     let mut world = World::new(WIDTH_CHUNKS, HEIGHT_CHUNKS, CHUNK_SIZE, p.table.clone(), 1);
@@ -343,11 +428,13 @@ struct SheetSource(Option<(SpriteDef, sim::Texture)>);
 fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    palette: Res<Palette>,
+    pristine: Res<Pristine>,
+    view: Res<View>,
     mut source: ResMut<SheetSource>,
 ) {
-    let world = build_world(&palette);
+    let world = pristine.0.clone();
     let (w, h) = (world.width() as u32, world.height() as u32);
+    let (view_w, view_h) = view.0.map_or((w as f32, h as f32), |v| (v.x, v.y));
     let mut image = Image::new_fill(
         Extent3d {
             width: w,
@@ -366,8 +453,8 @@ fn setup(
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::AutoMin {
-                min_width: w as f32,
-                min_height: h as f32,
+                min_width: view_w,
+                min_height: view_h,
             },
             ..OrthographicProjection::default_2d()
         }),
@@ -525,9 +612,35 @@ fn sync_player_sprite(
     transform.translation = center.extend(1.0);
 }
 
+/// Terrain mode: the camera follows the player and stays inside the world.
+fn follow_camera(
+    view: Res<View>,
+    sim: Res<Sim>,
+    player: Res<Player>,
+    mut camera: Single<(&mut Transform, &Projection), With<Camera2d>>,
+) {
+    if view.0.is_none() {
+        return;
+    }
+    let (transform, projection) = &mut *camera;
+    let Projection::Orthographic(ortho) = *projection else {
+        return;
+    };
+    let target = to_screen(&sim.0, player.0.pos);
+    let half = ortho.area.half_size();
+    let limit = Vec2::new(
+        (sim.0.width() as f32 / 2.0 - half.x).max(0.0),
+        (sim.0.height() as f32 / 2.0 - half.y).max(0.0),
+    );
+    let at = target.clamp(-limit, limit);
+    transform.translation.x = at.x;
+    transform.translation.y = at.y;
+}
+
 fn handle_input(
     keys: Res<ButtonInput<KeyCode>>,
     palette: Res<Palette>,
+    pristine: Res<Pristine>,
     mut control: ResMut<Control>,
     mut sim: ResMut<Sim>,
     mut flying: ResMut<Flying>,
@@ -539,7 +652,7 @@ fn handle_input(
         control.step_requested = true;
     }
     if keys.just_pressed(KeyCode::KeyR) {
-        sim.0 = build_world(&palette);
+        sim.0 = pristine.0.clone();
         flying.0 = Particles::new(PARTICLE_SEED);
     }
     for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
@@ -657,13 +770,18 @@ fn update_title(
     sim: Res<Sim>,
     control: Res<Control>,
     player: Res<Player>,
+    origin: Res<Origin>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
     if sim.is_changed() || control.is_changed() {
         let state = if control.paused { " [paused]" } else { "" };
         let brush = &sim.0.materials().get(control.brush).expect("known").name;
+        let (x, y) = (
+            origin.0.0 + player.0.pos.0 as i32,
+            origin.0.1 + player.0.pos.1 as i32,
+        );
         window.title = format!(
-            "noita-rust sandbox - frame {} - brush {brush} - fly {:.2}s{state}",
+            "noita-rust sandbox - frame {} - at {x},{y} - brush {brush} - fly {:.2}s{state}",
             sim.0.tick(),
             player.0.flying_time_left
         );

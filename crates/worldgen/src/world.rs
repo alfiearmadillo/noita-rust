@@ -505,6 +505,14 @@ impl WorldTerrain {
         ))
     }
 
+    /// The index into the document-order definitions of an engine table index.
+    pub fn document_index(&self, index: u32) -> u16 {
+        self.world
+            .to_document
+            .get(index as usize)
+            .map_or(0, |&i| i as u16)
+    }
+
     /// The name of an engine table index.
     pub fn name(&self, index: u32) -> &str {
         self.world
